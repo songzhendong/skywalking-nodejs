@@ -22,9 +22,14 @@ $ npm install --save skywalking-backend-js
 
 ## Set up NodeJS Agent
 
-SkyWalking NodeJS SDK requires SkyWalking backend (OAP) 8.0+ and NodeJS >= 20,
-other versions are not tested and SkyWalking NodeJS SDK may or may not work,
-please make sure to use the supported versions before reporting any issue.
+SkyWalking NodeJS SDK requires:
+
+- **OAP** 8.0+ for tracing (Node.js runtime metrics additionally require the `nodejs-runtime`
+  meter analyzer in OAP; verified on OAP 9+ / 11.x with Horizon UI).
+- **Node.js** >= 20 (`package.json` `engines`; CI verifies 20, 22, and 24).
+
+Other versions are not tested and may not work. Please use supported versions before reporting issues.
+
 
 ```typescript
 import agent from 'skywalking-backend-js';
@@ -72,9 +77,76 @@ Environment Variable | Description | Default
 | `SW_AWS_SQS_CHECK_BODY` | Incoming SQS messages check inside the body for trace ID in order to allow linking outgoing SNS messages to incoming SQS. | `false` |
 | `SW_AGENT_MAX_BUFFER_SIZE` | The maximum buffer size before sending the segment data to backend | `'1000'` |
 | `SW_AGENT_TRACE_TIMEOUT` | The timeout for trace requests to backend services | `'10000'` |
+| `SW_AGENT_RUNTIME_METRICS_REPORTER_ACTIVE` | Whether to report Node.js runtime metrics through MeterReportService (1s interval) | `true` |
+| `SW_AGENT_RUNTIME_METRICS_COLLECT_PERIOD` | Runtime metric sample interval in milliseconds | `1000` |
+| `SW_AGENT_RUNTIME_METRICS_REPORT_PERIOD` | Runtime metric report interval in milliseconds | `1000` |
+| `SW_AGENT_RUNTIME_METRICS_BUFFER_SIZE` | Maximum buffered runtime metric samples before dropping oldest | `600` |
+
+Legacy env names `SW_AGENT_NVM_METRICS_*` and `SW_AGENT_NVM_JVM_*` are still accepted as aliases.
 
 
 Note that the various ignore options like `SW_IGNORE_SUFFIX`, `SW_TRACE_IGNORE_PATH` and `SW_HTTP_IGNORE_METHOD` as well as endpoints which are not recorded due to exceeding `SW_AGENT_MAX_BUFFER_SIZE` all propagate their ignored status downstream to any other endpoints they may call. If that endpoint is running the Node Skywalking agent then regardless of its ignore settings it will not be recorded since its upstream parent was not recorded. This allows the elimination of entire trees of endpoints you are not interested in as well as eliminating partial traces if a span in the chain is ignored but calls out to other endpoints which are recorded as children of ROOT instead of the actual parent.
+
+## Node.js Runtime Metrics
+
+The agent reports **Node.js runtime metrics** (process memory and CPU) to OAP through **`MeterReportService`**, the same gRPC pipeline used by the Go and Python agents. The default collect/report cycle is **1 second** (configurable). OAP analyzes raw meters via `nodejs-runtime.yaml` and exposes **`meter_instance_nodejs_*`** metrics on the General layer instance dashboard in Horizon UI.
+
+On each collect interval (`SW_AGENT_RUNTIME_METRICS_COLLECT_PERIOD`, default 1 second), the agent samples Node.js runtime APIs. On each report interval (`SW_AGENT_RUNTIME_METRICS_REPORT_PERIOD`, default 1 second), buffered samples are sent through gRPC `MeterReportService.collect` to OAP (`11800`).
+
+| Node.js source | Meter name | Notes |
+| :--- | :--- | :--- |
+| `process.cpuUsage()` user + system | `instance_nodejs_process_cpu` | percent of machine (combined, divided by logical CPU count) |
+| `process.memoryUsage().heapUsed` | `instance_nodejs_heap_used` | bytes |
+| `process.memoryUsage().heapTotal` | `instance_nodejs_heap_total` | bytes |
+| `v8.getHeapStatistics().heap_size_limit` | `instance_nodejs_heap_limit` | bytes |
+| `process.memoryUsage().rss` | `instance_nodejs_rss` | bytes |
+| `process.memoryUsage().external` | `instance_nodejs_external_memory` | bytes |
+
+### Supported environments
+
+- **Node.js**: >= 20 (CI verified on 20, 22, 24; matches `package.json` `engines`).
+- **Platforms**: Linux, Windows, macOS, and containers (Docker/Kubernetes). Uses Node.js built-in
+  APIs only (`process.memoryUsage`, `process.cpuUsage`, `v8.getHeapStatistics`); no native addons.
+- **Scope**: Node.js runtime meters only (`instance_nodejs_*`), not JVM/Go metrics. Shown as
+  **Node.js Runtime** on the Horizon UI instance dashboard.
+
+Requirements:
+
+- OAP gRPC collector (`SW_AGENT_COLLECTOR_BACKEND_SERVICES`, default port `11800`).
+- OAP meter analyzer config `nodejs-runtime` enabled (included in default `meterAnalyzerActiveFiles`).
+- Shared gRPC Channel (`GRPCChannelManager`): Trace, Heartbeat, and Meter share one connection to OAP (port `11800`).
+
+Start the agent at the **entry point of your application** (before other modules load when possible):
+
+```typescript
+import agent from 'skywalking-backend-js';
+
+agent.start({
+  serviceName: 'my-node-service',
+  collectorAddress: '127.0.0.1:11800',
+});
+```
+
+Or with environment variables:
+
+```bash
+export SW_AGENT_NAME=my-node-service
+export SW_AGENT_COLLECTOR_BACKEND_SERVICES=127.0.0.1:11800
+node app.js
+```
+
+Programmatic overrides:
+
+```typescript
+agent.start({
+  runtimeMetricsReporterActive: true,       // SW_AGENT_RUNTIME_METRICS_REPORTER_ACTIVE
+  runtimeMetricsCollectPeriod: 1_000,       // SW_AGENT_RUNTIME_METRICS_COLLECT_PERIOD
+  runtimeMetricsReportPeriod: 1_000,        // SW_AGENT_RUNTIME_METRICS_REPORT_PERIOD
+  runtimeMetricsBufferSize: 600,            // SW_AGENT_RUNTIME_METRICS_BUFFER_SIZE
+});
+```
+
+Note: the Node.js agent currently exposes **bundled runtime metrics only**. Custom business metrics are not yet available through a public API; use [OpenTelemetry metrics](https://skywalking.apache.org/docs/main/latest/en/setup/backend/opentelemetry-receiver/) if you need those.
 
 ## Supported Libraries
 
