@@ -65,39 +65,97 @@ export type AgentConfig = {
   nvmJvmMetricsBufferSize?: number;
 };
 
-function applyDeprecatedRuntimeMetricConfig(config: AgentConfig): void {
-  if (config.runtimeMetricsReporterActive === undefined) {
+export function normalizeDeprecatedRuntimeMetricOptions(options: AgentConfig): AgentConfig {
+  const normalized = { ...options };
+
+  if (normalized.runtimeMetricsReporterActive === undefined) {
+    const reporterActive = normalized.nvmMetricsReporterActive ?? normalized.nvmJvmReporterActive;
+    if (reporterActive !== undefined) {
+      normalized.runtimeMetricsReporterActive = reporterActive;
+    }
+  }
+  delete normalized.nvmMetricsReporterActive;
+  delete normalized.nvmJvmReporterActive;
+
+  if (normalized.runtimeMetricsCollectPeriod === undefined) {
+    const collectPeriod = normalized.nvmMetricsCollectPeriod ?? normalized.nvmJvmMetricsCollectPeriod;
+    if (collectPeriod !== undefined) {
+      normalized.runtimeMetricsCollectPeriod = collectPeriod;
+    }
+  }
+  delete normalized.nvmMetricsCollectPeriod;
+  delete normalized.nvmJvmMetricsCollectPeriod;
+
+  if (normalized.runtimeMetricsReportPeriod === undefined) {
+    const reportPeriod = normalized.nvmMetricsReportPeriod ?? normalized.nvmJvmMetricsReportPeriod;
+    if (reportPeriod !== undefined) {
+      normalized.runtimeMetricsReportPeriod = reportPeriod;
+    }
+  }
+  delete normalized.nvmMetricsReportPeriod;
+  delete normalized.nvmJvmMetricsReportPeriod;
+
+  if (normalized.runtimeMetricsBufferSize === undefined) {
+    const bufferSize = normalized.nvmMetricsBufferSize ?? normalized.nvmJvmMetricsBufferSize;
+    if (bufferSize !== undefined) {
+      normalized.runtimeMetricsBufferSize = bufferSize;
+    }
+  }
+  delete normalized.nvmMetricsBufferSize;
+  delete normalized.nvmJvmMetricsBufferSize;
+
+  return normalized;
+}
+
+function clearDeprecatedRuntimeMetricFields(config: AgentConfig): void {
+  delete config.nvmMetricsReporterActive;
+  delete config.nvmJvmReporterActive;
+  delete config.nvmMetricsCollectPeriod;
+  delete config.nvmJvmMetricsCollectPeriod;
+  delete config.nvmMetricsReportPeriod;
+  delete config.nvmJvmMetricsReportPeriod;
+  delete config.nvmMetricsBufferSize;
+  delete config.nvmJvmMetricsBufferSize;
+}
+
+function applyDeprecatedRuntimeMetricConfig(config: AgentConfig, options: AgentConfig = {}): void {
+  if (options.runtimeMetricsReporterActive === undefined) {
     if (config.nvmMetricsReporterActive !== undefined) {
       config.runtimeMetricsReporterActive = config.nvmMetricsReporterActive;
     } else if (config.nvmJvmReporterActive !== undefined) {
       config.runtimeMetricsReporterActive = config.nvmJvmReporterActive;
     }
   }
-  if (config.runtimeMetricsCollectPeriod === undefined) {
+
+  if (options.runtimeMetricsCollectPeriod === undefined) {
     if (config.nvmMetricsCollectPeriod !== undefined) {
       config.runtimeMetricsCollectPeriod = config.nvmMetricsCollectPeriod;
     } else if (config.nvmJvmMetricsCollectPeriod !== undefined) {
       config.runtimeMetricsCollectPeriod = config.nvmJvmMetricsCollectPeriod;
     }
   }
-  if (config.runtimeMetricsReportPeriod === undefined) {
+
+  if (options.runtimeMetricsReportPeriod === undefined) {
     if (config.nvmMetricsReportPeriod !== undefined) {
       config.runtimeMetricsReportPeriod = config.nvmMetricsReportPeriod;
     } else if (config.nvmJvmMetricsReportPeriod !== undefined) {
       config.runtimeMetricsReportPeriod = config.nvmJvmMetricsReportPeriod;
     }
   }
-  if (config.runtimeMetricsBufferSize === undefined) {
+
+  if (options.runtimeMetricsBufferSize === undefined) {
     if (config.nvmMetricsBufferSize !== undefined) {
       config.runtimeMetricsBufferSize = config.nvmMetricsBufferSize;
     } else if (config.nvmJvmMetricsBufferSize !== undefined) {
       config.runtimeMetricsBufferSize = config.nvmJvmMetricsBufferSize;
     }
   }
+
+  clearDeprecatedRuntimeMetricFields(config);
 }
 
-export function finalizeConfig(config: AgentConfig): void {
-  applyDeprecatedRuntimeMetricConfig(config);
+export function finalizeConfig(config: AgentConfig, options: AgentConfig = {}): void {
+  applyDeprecatedRuntimeMetricConfig(config, options);
 
   const escapeRegExp = (s: string) => s.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, '\\$1');
 
