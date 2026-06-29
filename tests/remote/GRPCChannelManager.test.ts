@@ -177,9 +177,10 @@ describe('GRPCChannelManager (Java DNS re-resolve parity)', () => {
     expect(manager.getLastStatusForTest()).toBe(GRPCChannelStatus.DISCONNECT);
   });
 
-  it('switches channel when DNS re-resolve changes ip at same index', async () => {
+  it('keeps channel when DNS ip changes at same index (Java GRPCChannelManager parity)', async () => {
     config.collectorAddress = 'oap.test:11800';
     config.isResolveDnsPeriodically = true;
+    config.forceReconnectionPeriod = 1;
     randomSpy.mockReturnValue(0);
 
     jest
@@ -193,10 +194,12 @@ describe('GRPCChannelManager (Java DNS re-resolve parity)', () => {
     expect(mockShutdownNow).not.toHaveBeenCalled();
 
     manager.reportError({ code: grpc.status.UNAVAILABLE, message: 'fail' } as grpc.ServiceError);
+    mockIsConnected.mockReturnValue(true);
     await manager.runCheck();
 
-    expect(manager.resolveAddress()).toBe('10.0.1.2:11800');
-    expect(mockShutdownNow).toHaveBeenCalledTimes(1);
+    expect(manager.resolveAddress()).toBe('10.0.1.1:11800');
+    expect(mockShutdownNow).not.toHaveBeenCalled();
+    expect(manager.getSelectedIdxForTest()).toBe(0);
   });
 
   it('switches channel when random index changes (Java selectedIdx rotation)', async () => {

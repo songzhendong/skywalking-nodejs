@@ -106,6 +106,56 @@ describe('TLSChannelBuilder (Java TLSChannelBuilder parity)', () => {
     expect(createSslSpy).toHaveBeenCalledWith(ca, null, null);
   });
 
+  it('loads private key via PrivateKeyUtil.loadDecryptionKey for mTLS', () => {
+    config.secure = false;
+    config.forceTls = false;
+    config.sslTrustedCaPath = '/ca/ca.crt';
+    config.sslCertChainPath = '/ca/client.crt';
+    config.sslKeyPath = '/ca/client.pem';
+    const ca = Buffer.from('CA');
+    const cert = Buffer.from('CERT');
+    const key = Buffer.from('KEY-PEM');
+    jest.spyOn(fs, 'statSync').mockReturnValue({ isFile: () => true } as fs.Stats);
+    jest.spyOn(fs, 'readFileSync').mockImplementation((p: string | number) => {
+      const pathText = String(p);
+      if (pathText.endsWith('ca.crt')) return ca;
+      if (pathText.endsWith('client.crt')) return cert;
+      if (pathText.endsWith('client.pem')) return key;
+      throw new Error(`unexpected read ${pathText}`);
+    });
+    const sslCredentials = {} as grpc.ChannelCredentials;
+    const createSslSpy = jest.spyOn(grpc.credentials, 'createSsl').mockReturnValue(sslCredentials);
+
+    new TLSChannelBuilder().build({ ...baseContext });
+
+    expect(createSslSpy).toHaveBeenCalledWith(ca, key, cert);
+  });
+
+  it('loads private key via PrivateKeyUtil.loadDecryptionKey for mTLS', () => {
+    config.secure = false;
+    config.forceTls = false;
+    config.sslTrustedCaPath = '/ca/ca.crt';
+    config.sslCertChainPath = '/ca/client.crt';
+    config.sslKeyPath = '/ca/client.pem';
+    const ca = Buffer.from('CA');
+    const cert = Buffer.from('CERT');
+    const key = Buffer.from('KEY-PEM');
+    jest.spyOn(fs, 'statSync').mockReturnValue({ isFile: () => true } as fs.Stats);
+    jest.spyOn(fs, 'readFileSync').mockImplementation((p: string | number) => {
+      const pathText = String(p);
+      if (pathText.endsWith('ca.crt')) return ca;
+      if (pathText.endsWith('client.crt')) return cert;
+      if (pathText.endsWith('client.pem')) return key;
+      throw new Error(`unexpected read ${pathText}`);
+    });
+    const sslCredentials = {} as grpc.ChannelCredentials;
+    const createSslSpy = jest.spyOn(grpc.credentials, 'createSsl').mockReturnValue(sslCredentials);
+
+    new TLSChannelBuilder().build({ ...baseContext });
+
+    expect(createSslSpy).toHaveBeenCalledWith(ca, key, cert);
+  });
+
   it('enables mTLS when cert chain and key files exist under agent package', () => {
     config.secure = false;
     config.forceTls = false;

@@ -182,12 +182,6 @@ export default class GRPCChannelManager implements BootService {
         return;
       }
 
-      const selectedTarget = this.grpcServers[this.selectedIdx];
-      if (selectedTarget && selectedTarget !== this.currentTarget) {
-        await this.switchToServer(selectedTarget, this.selectedIdx);
-        return;
-      }
-
       const forceReconnect = ++this.reconnectCount > (config.forceReconnectionPeriod ?? 1);
       if (this.managedChannel?.isConnected(forceReconnect)) {
         this.reconnectCount = 0;

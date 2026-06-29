@@ -19,6 +19,16 @@
 
 /* eslint-env jest */
 
+const mockLoggerError = jest.fn();
+jest.mock('../../src/logging', () => ({
+  createLogger: jest.fn(() => ({
+    error: mockLoggerError,
+    debug: jest.fn(),
+    warn: jest.fn(),
+    info: jest.fn(),
+  })),
+}));
+
 import {
   expandBackendAddresses,
   isLiteralIp,
@@ -26,6 +36,20 @@ import {
 } from '../../src/agent/core/remote/BackendAddressResolver';
 
 describe('BackendAddressResolver (Java InetAddress.getAllByName parity)', () => {
+  beforeEach(() => {
+    mockLoggerError.mockClear();
+  });
+
+  it('logs ERROR when DNS lookup fails (Java LOGGER.error)', async () => {
+    const lookup = jest.fn().mockRejectedValue(new Error('ENOTFOUND'));
+    await expandBackendAddresses(['missing.local:11800'], true, lookup);
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'Failed to resolve %s of backend service.',
+      'missing.local',
+      expect.any(Error),
+    );
+  });
+
   it('parses comma-separated static backend addresses', () => {
     expect(parseStaticBackendAddresses('127.0.0.1:11800, 10.0.0.2:11800')).toEqual([
       '127.0.0.1:11800',

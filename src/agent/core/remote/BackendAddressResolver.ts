@@ -95,7 +95,7 @@ export async function expandBackendAddresses(
         resolved.push(`${record.address}:${port}`);
       }
     } catch (error) {
-      logger.error('Failed to resolve %s of backend service: %s', host, error);
+      logger.error('Failed to resolve %s of backend service.', host, error);
     }
   }
 

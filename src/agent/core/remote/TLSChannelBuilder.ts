@@ -20,6 +20,7 @@
 import fs from 'fs';
 import * as grpc from '@grpc/grpc-js';
 import { resolveAgentPath } from '../boot/AgentPackagePath';
+import { loadDecryptionKey } from '../util/PrivateKeyUtil';
 import config from '../../../config/AgentConfig';
 import { createLogger } from '../../../logging';
 import ChannelBuilder, { ChannelBuildContext } from './ChannelBuilder';
@@ -37,6 +38,21 @@ function readTlsFile(configuredPath: string | undefined): Buffer | null {
     }
   } catch {
     // missing or unreadable — treated as absent
+  }
+  return null;
+}
+
+function readPrivateKey(configuredPath: string | undefined): Buffer | null {
+  const filePath = resolveAgentPath(configuredPath);
+  if (!filePath) {
+    return null;
+  }
+  try {
+    if (fs.statSync(filePath).isFile()) {
+      return loadDecryptionKey(filePath);
+    }
+  } catch (error) {
+    logger.error('Failed to load private key from %s: %s', filePath, error);
   }
   return null;
 }
@@ -69,7 +85,7 @@ export default class TLSChannelBuilder implements ChannelBuilder {
     }
 
     const rootCerts = readTlsFile(config.sslTrustedCaPath);
-    let privateKey = readTlsFile(config.sslKeyPath);
+    let privateKey = readPrivateKey(config.sslKeyPath);
     let certChain = readTlsFile(config.sslCertChainPath);
 
     const certPathSet = Boolean(config.sslCertChainPath);
