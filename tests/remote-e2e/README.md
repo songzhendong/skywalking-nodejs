@@ -70,4 +70,4 @@ Mock-collector E2E uses **insecure gRPC** only. Full **TLS + periodic DNS re-res
 
 - Case: `test/e2e-v2/cases/nodejs/ssl-dns/` (branch `feature/nodejs-agent-tls-e2e`)
 - CI job: **Agent NodeJS SSL DNS**
-- Agent uses mounted CA at `/app/ca/ca.crt`, `SW_AGENT_IS_RESOLVE_DNS_PERIODICALLY=true`, `SW_AGENT_SSL_TARGET_NAME_OVERRIDE=oap`, hostname `oap.test:11800` with `/etc/hosts` repoint to simulate DNS recovery under TLS.
+- Agent uses mounted CA at `/app/ca/ca.crt`, `SW_AGENT_IS_RESOLVE_DNS_PERIODICALLY=true`, hostname `oap:11800` with `/etc/hosts` repoint to simulate DNS recovery under TLS (cert CN matches `oap`).

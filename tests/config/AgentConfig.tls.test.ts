@@ -50,13 +50,6 @@ describe('AgentConfig TLS settings (Java agent.config parity)', () => {
     expect(cfg.sslKeyPath).toBe('/ca/client.key');
   });
 
-  it('reads SW_AGENT_SSL_TARGET_NAME_OVERRIDE', () => {
-    process.env.SW_AGENT_SSL_TARGET_NAME_OVERRIDE = 'oap';
-    jest.resetModules();
-    const cfg = require('../../src/config/AgentConfig').default;
-    expect(cfg.sslTargetNameOverride).toBe('oap');
-  });
-
   it('defaults SW_AGENT_SSL_TRUSTED_CA_PATH to ca/ca.crt', () => {
     delete process.env.SW_AGENT_SSL_TRUSTED_CA_PATH;
     jest.resetModules();

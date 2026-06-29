@@ -33,7 +33,6 @@ describe('TLSChannelBuilder (Java TLSChannelBuilder parity)', () => {
     sslTrustedCaPath: config.sslTrustedCaPath,
     sslCertChainPath: config.sslCertChainPath,
     sslKeyPath: config.sslKeyPath,
-    sslTargetNameOverride: config.sslTargetNameOverride,
   };
   const baseContext = {
     credentials: grpc.credentials.createInsecure(),
@@ -50,7 +49,6 @@ describe('TLSChannelBuilder (Java TLSChannelBuilder parity)', () => {
     config.sslTrustedCaPath = original.sslTrustedCaPath;
     config.sslCertChainPath = original.sslCertChainPath;
     config.sslKeyPath = original.sslKeyPath;
-    config.sslTargetNameOverride = original.sslTargetNameOverride;
     jest.restoreAllMocks();
   });
 
@@ -179,16 +177,6 @@ describe('TLSChannelBuilder (Java TLSChannelBuilder parity)', () => {
     new TLSChannelBuilder().build({ ...baseContext });
 
     expect(createSslSpy).toHaveBeenCalledWith(ca, key, cert);
-  });
-
-  it('sets grpc.ssl_target_name_override when configured', () => {
-    config.secure = true;
-    config.sslTargetNameOverride = 'oap';
-    jest.spyOn(grpc.credentials, 'createSsl').mockReturnValue({} as grpc.ChannelCredentials);
-
-    const result = new TLSChannelBuilder().build({ ...baseContext });
-
-    expect(result.options['grpc.ssl_target_name_override']).toBe('oap');
   });
 
   it('keeps insecure credentials when TLS is not enabled and default ca file is absent', () => {

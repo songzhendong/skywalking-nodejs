@@ -28,7 +28,6 @@ export type AgentConfig = {
   sslTrustedCaPath?: string;
   sslCertChainPath?: string;
   sslKeyPath?: string;
-  sslTargetNameOverride?: string;
   authorization?: string;
   maxBufferSize?: number;
   coldEndpoint?: boolean;
@@ -250,7 +249,6 @@ const _config = {
   })(),
   sslCertChainPath: process.env.SW_AGENT_SSL_CERT_CHAIN_PATH ?? '',
   sslKeyPath: process.env.SW_AGENT_SSL_KEY_PATH ?? '',
-  sslTargetNameOverride: process.env.SW_AGENT_SSL_TARGET_NAME_OVERRIDE ?? '',
   authorization: process.env.SW_AGENT_AUTHENTICATION,
   maxBufferSize: ((n) => (Number.isSafeInteger(n) && n > 0 ? n : 1000))(
     Number.parseInt(process.env.SW_AGENT_MAX_BUFFER_SIZE ?? '', 10),

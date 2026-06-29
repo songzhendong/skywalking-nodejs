@@ -80,7 +80,6 @@ Environment Variable | Description | Default
 | `SW_AGENT_SSL_TRUSTED_CA_PATH` | Trusted CA file path (relative to agent package root, or absolute). Default `ca/ca.crt` (Java `agent.ssl_trusted_ca_path`) | `ca/ca.crt` |
 | `SW_AGENT_SSL_CERT_CHAIN_PATH` | Client certificate chain for mTLS, relative to agent package root (requires `SW_AGENT_SSL_KEY_PATH`) | not set |
 | `SW_AGENT_SSL_KEY_PATH` | Client private key for mTLS (requires `SW_AGENT_SSL_CERT_CHAIN_PATH`) | not set |
-| `SW_AGENT_SSL_TARGET_NAME_OVERRIDE` | SNI override for `@grpc/grpc-js` when connecting by IP or hostname mismatch | not set |
 | `SW_AGENT_AUTHENTICATION` | The authentication token to verify that the agent is trusted by the backend OAP, as for how to configure the backend, refer to [the yaml](https://github.com/apache/skywalking/blob/4f0f39ffccdc9b41049903cc540b8904f7c9728e/oap-server/server-bootstrap/src/main/resources/application.yml#L155-L158). | not set |
 | `SW_AGENT_LOGGING_LEVEL` | The logging level, could be one of `error`, `warn`, `info`, `debug` | `info` |
 | `SW_AGENT_DISABLE_PLUGINS` | Comma-delimited list of plugins to disable in the plugins directory (e.g. "mysql", "express") | `` |

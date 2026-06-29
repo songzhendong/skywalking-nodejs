@@ -100,15 +100,11 @@ export default class TLSChannelBuilder implements ChannelBuilder {
     }
 
     const credentials = grpc.credentials.createSsl(rootCerts, privateKey, certChain);
-    const options: grpc.ChannelOptions = { ...context.options };
-    if (config.sslTargetNameOverride) {
-      options['grpc.ssl_target_name_override'] = config.sslTargetNameOverride;
-    }
 
     return {
       ...context,
       credentials,
-      options,
+      options: { ...context.options },
     };
   }
 }
