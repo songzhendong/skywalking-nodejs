@@ -17,7 +17,7 @@
  *
  */
 
-import config, { AgentConfig, finalizeConfig } from './config/AgentConfig';
+import config, { AgentConfig, finalizeConfig, normalizeDeprecatedRuntimeMetricOptions } from './config/AgentConfig';
 import ServiceManager from './agent/core/boot/ServiceManager';
 import { createLogger } from './logging';
 import PluginInstaller from './core/PluginInstaller';
@@ -39,8 +39,9 @@ class Agent {
       return;
     }
 
-    Object.assign(config, options);
-    finalizeConfig(config);
+    const normalizedOptions = normalizeDeprecatedRuntimeMetricOptions(options);
+    Object.assign(config, normalizedOptions);
+    finalizeConfig(config, normalizedOptions);
 
     logger.debug('Starting SkyWalking agent');
 

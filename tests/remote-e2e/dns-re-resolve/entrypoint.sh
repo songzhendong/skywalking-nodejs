@@ -17,11 +17,14 @@
 #
 set -euo pipefail
 AIP="$(getent hosts collector-a | awk '{print $1; exit}')"
-if [[ -z "${AIP}" ]]; then
-  echo "collector-a IP not found for oap.test bootstrap" >&2
+BIP="$(getent hosts collector-b | awk '{print $1; exit}')"
+if [[ -z "${AIP}" || -z "${BIP}" ]]; then
+  echo "collector-a/collector-b IP not found for oap.test bootstrap" >&2
   exit 1
 fi
 grep -v '[[:space:]]oap\.test' /etc/hosts > /tmp/hosts.oap || cp /etc/hosts /tmp/hosts.oap
+# Two A records for oap.test — Java expandBackendAddresses / getAllByName multi-IP parity.
 echo "${AIP} oap.test" >> /tmp/hosts.oap
+echo "${BIP} oap.test" >> /tmp/hosts.oap
 cat /tmp/hosts.oap > /etc/hosts
 exec npx ts-node /app/tests/remote-e2e/dns-re-resolve/server.ts

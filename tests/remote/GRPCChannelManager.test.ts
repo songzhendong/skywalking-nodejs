@@ -24,9 +24,19 @@ import config from '../../src/config/AgentConfig';
 import * as resolver from '../../src/agent/core/remote/BackendAddressResolver';
 import GRPCChannelManager from '../../src/agent/core/remote/GRPCChannelManager';
 import { GRPCChannelStatus } from '../../src/agent/core/remote/GRPCChannelStatus';
+import GRPCChannel from '../../src/agent/core/remote/GRPCChannel';
 
 const mockShutdownNow = jest.fn();
 const mockIsConnected = jest.fn((_force?: boolean) => true);
+const mockBuild = jest.fn(() => ({
+  getChannel: () => ({
+    getConnectivityState: jest.fn(() => grpc.connectivityState.READY),
+    watchConnectivityState: jest.fn(),
+  }),
+  getClientOptions: () => ({}),
+  isConnected: (force?: boolean) => mockIsConnected(force),
+  shutdownNow: mockShutdownNow,
+}));
 
 jest.mock('../../src/agent/core/remote/GRPCChannel', () => ({
   __esModule: true,
@@ -34,15 +44,7 @@ jest.mock('../../src/agent/core/remote/GRPCChannel', () => ({
     newBuilder: jest.fn(() => ({
       addManagedChannelBuilder: jest.fn().mockReturnThis(),
       addChannelDecorator: jest.fn().mockReturnThis(),
-      build: jest.fn(() => ({
-        getChannel: () => ({
-          getConnectivityState: jest.fn(() => grpc.connectivityState.READY),
-          watchConnectivityState: jest.fn(),
-        }),
-        getClientOptions: () => ({}),
-        isConnected: (force?: boolean) => mockIsConnected(force),
-        shutdownNow: mockShutdownNow,
-      })),
+      build: mockBuild,
     })),
   },
 }));
@@ -318,5 +320,34 @@ describe('GRPCChannelManager (Java DNS re-resolve parity)', () => {
     expect(manager.hasCheckTimerForTest()).toBe(true);
     manager.shutdown();
     expect(manager.hasCheckTimerForTest()).toBe(false);
+  });
+
+  describe('shutdown late async continuation safety (H2)', () => {
+    it('does not build a channel when shutdown completes during DNS expand', async () => {
+      config.collectorAddress = 'fake-oap.local:11800';
+      config.isResolveDnsPeriodically = true;
+      randomSpy.mockReturnValue(0);
+      mockBuild.mockClear();
+      (GRPCChannel.newBuilder as jest.Mock).mockClear();
+
+      let resolveExpand!: (value: string[]) => void;
+      const expandPromise = new Promise<string[]>((resolve) => {
+        resolveExpand = resolve;
+      });
+      jest.spyOn(resolver, 'expandBackendAddresses').mockReturnValue(expandPromise);
+
+      const listener = jest.fn();
+      manager = new GRPCChannelManager();
+      manager.addChannelListener({ statusChanged: listener });
+      const runPromise = manager.runCheck();
+
+      manager.shutdown();
+      resolveExpand(['10.0.1.1:11800']);
+      await runPromise;
+
+      expect(mockBuild).not.toHaveBeenCalled();
+      expect(GRPCChannel.newBuilder).not.toHaveBeenCalled();
+      expect(listener).not.toHaveBeenCalledWith(GRPCChannelStatus.CONNECTED);
+    });
   });
 });

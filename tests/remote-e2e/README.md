@@ -8,7 +8,7 @@ End-to-end tests for Java-aligned gRPC backend failover. Uses
 | Directory | Validates |
 |-----------|-----------|
 | `static-failover/` | Phase A — comma-separated backends, primary stop, secondary receives traces |
-| `dns-re-resolve/` | Phase B — `oap.test` hostname re-resolve via `/etc/hosts` + primary stop |
+| `dns-re-resolve/` | Phase B — `oap.test` multi-IP DNS expand + `selectedIdx` rotation failover (Java parity) |
 
 ## Host port allocation (Phase A / B disjoint)
 
@@ -29,7 +29,7 @@ Reserved / avoid: `5000`, `12800`, `12801` (local nodedev OAP/mock).
 | Scenario | Unit (`tests/remote/`) | E2E (this dir) |
 |----------|------------------------|----------------|
 | Static multi-address failover | `GRPCChannelManager` | Phase A |
-| DNS periodic re-resolve + IP change | `GRPCChannelManager`, `BackendAddressResolver` | Phase B |
+| DNS multi-IP expand + selectedIdx failover | `GRPCChannelManager`, `BackendAddressResolver` | Phase B |
 | Multi hostname / multi IP / IPv6-only DNS | `BackendAddressResolver` | — |
 | DNS all-fail then recovery | `GRPCChannelManager` | — |
 | TLS gRPC (`SW_AGENT_SECURE`) | `TLSChannelBuilder`, `AgentConfig.dns` | mock-collector has no TLS; use `scripts/tls-scheme-a-test/` against real OAP |
@@ -59,7 +59,7 @@ bash tests/remote-e2e/run-all.sh
 
 | Variable | Phase A | Phase B |
 |----------|---------|---------|
-| `SW_AGENT_COLLECTOR_BACKEND_SERVICES` | `collector-a:19876,collector-b:19876` | `oap.test:19876` |
+| `SW_AGENT_COLLECTOR_BACKEND_SERVICES` | `collector-a:19876,collector-b:19876` | `oap.test:19876` (2 A records in entrypoint) |
 | `SW_AGENT_IS_RESOLVE_DNS_PERIODICALLY` | — | `true` |
 | `SW_AGENT_GRPC_CHANNEL_CHECK_INTERVAL` | `2` | `1` |
 | `SW_AGENT_SECURE` | `false` (insecure; TLS covered in unit + scheme-a) | same |

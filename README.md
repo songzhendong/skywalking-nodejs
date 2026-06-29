@@ -96,6 +96,7 @@ Environment Variable | Description | Default
 | `SW_AWS_LAMBDA_CHAIN` | Pass trace ID to AWS Lambda function in its parameters (to allow linking). Only use if both caller and callee will be instrumented. | `false` |
 | `SW_AWS_SQS_CHECK_BODY` | Incoming SQS messages check inside the body for trace ID in order to allow linking outgoing SNS messages to incoming SQS. | `false` |
 | `SW_AGENT_MAX_BUFFER_SIZE` | The maximum buffer size before sending the segment data to backend | `'1000'` |
+| `SW_AGENT_COLLECTOR_GRPC_UPSTREAM_TIMEOUT` | Upstream gRPC call deadline in seconds (Java `collector.grpc_upstream_timeout`; used by trace/meter/heartbeat). Falls back to `SW_AGENT_TRACE_TIMEOUT` when unset | `30` |
 | `SW_AGENT_TRACE_TIMEOUT` | The timeout for trace requests to backend services | `'10000'` |
 | `SW_AGENT_RUNTIME_METRICS_REPORTER_ACTIVE` | Whether to report Node.js runtime metrics through MeterReportService (1s interval) | `true` |
 | `SW_AGENT_RUNTIME_METRICS_COLLECT_PERIOD` | Runtime metric sample interval in milliseconds | `1000` |

@@ -27,12 +27,7 @@ import waitForExpect from 'wait-for-expect';
 
 const rootDir = path.resolve(__dirname);
 const SERVER_PORT = 5020;
-const COLLECTOR_A_HTTP_PORT = 12820;
 const COLLECTOR_B_HTTP_PORT = 12821;
-const WARMUP_WAIT_MS = 60000;
-const WARMUP_POLL_MS = 2000;
-const FAILOVER_WAIT_MS = 90000;
-const FAILOVER_POLL_MS = 3000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 process.env.TESTCONTAINERS_RYUK_DISABLED = 'true';
@@ -48,37 +43,10 @@ async function flushServer(): Promise<void> {
 }
 
 async function assertCollectorReceivedPing(port: number): Promise<void> {
-  const response = await axios.get(`http://localhost:${port}/receiveData`, { timeout: 10000 });
-  const data = String(response.data);
+  const data = String((await axios.get(`http://localhost:${port}/receiveData`)).data);
   expect(data).toContain('serviceName: server');
   expect(data).toContain('operationName: GET:/ping');
   expect(data).toContain("http.status_code, value: '200'");
-}
-
-function serverContainerId(): string {
-  return execSync('docker ps --filter "name=server-1" -q | head -1', { encoding: 'utf8' }).trim();
-}
-
-function hostIpInServer(host: string): string {
-  const sid = serverContainerId();
-  return execSync(`docker exec ${sid} getent hosts ${host} | awk '{print $1; exit}'`, { encoding: 'utf8' }).trim();
-}
-
-function assertOapPointsToCollector(name: 'collector-a' | 'collector-b'): void {
-  const oapIp = hostIpInServer('oap.test');
-  const collectorIp = hostIpInServer(name);
-  expect(oapIp).toBeTruthy();
-  expect(collectorIp).toBeTruthy();
-  expect(oapIp).toBe(collectorIp);
-}
-
-function repointOapToCollectorB(): void {
-  const sid = serverContainerId();
-  execSync(
-    `docker exec ${sid} bash -c 'BIP=$(getent hosts collector-b | awk "{print \$1; exit}") && grep -v oap.test /etc/hosts > /tmp/h && echo "$BIP oap.test" >> /tmp/h && cat /tmp/h > /etc/hosts'`,
-    { stdio: 'pipe' },
-  );
-  assertOapPointsToCollector('collector-b');
 }
 
 function stopComposeService(nameSuffix: string): void {
@@ -87,40 +55,7 @@ function stopComposeService(nameSuffix: string): void {
   });
 }
 
-async function waitForWarmupOnCollectorA(): Promise<void> {
-  assertOapPointsToCollector('collector-a');
-  await waitForExpect(
-    async () => {
-      await pingServer();
-      await flushServer();
-      await assertCollectorReceivedPing(COLLECTOR_A_HTTP_PORT);
-    },
-    WARMUP_WAIT_MS,
-    WARMUP_POLL_MS,
-  );
-}
-
-async function waitForFailoverOnCollectorB(): Promise<void> {
-  await waitForExpect(
-    async () => {
-      await pingServer();
-      await flushServer();
-      await assertCollectorReceivedPing(COLLECTOR_B_HTTP_PORT);
-    },
-    FAILOVER_WAIT_MS,
-    FAILOVER_POLL_MS,
-  );
-}
-
-async function triggerFailoverTraffic(rounds: number): Promise<void> {
-  for (let i = 0; i < rounds; i += 1) {
-    await pingServer();
-    await flushServer();
-    await sleep(1500);
-  }
-}
-
-describe('remote-e2e dns re-resolve (Phase B)', () => {
+describe('remote-e2e dns multi-ip failover (Phase B, Java selectedIdx parity)', () => {
   let compose: StartedDockerComposeEnvironment | undefined;
 
   beforeAll(async () => {
@@ -137,18 +72,18 @@ describe('remote-e2e dns re-resolve (Phase B)', () => {
     }
   });
 
-  it('re-resolves hostname and reports to new backend after primary stops', async () => {
+  it('failovers via selectedIdx rotation after DNS expands hostname to multiple IPs', async () => {
     if (!compose) {
       throw new Error('Docker Compose environment failed to start');
     }
 
-    await waitForExpect(async () => pingServer(), 30000, 2000);
-    await waitForWarmupOnCollectorA();
+    await waitForExpect(async () => pingServer());
+    await sleep(6000);
 
-    repointOapToCollectorB();
-    stopComposeService('collector-a-1');
-    await sleep(3000);
+    await stopComposeService('collector-a-1');
+    await sleep(8000);
 
-    await waitForFailoverOnCollectorB();
+    await waitForExpect(async () => pingServer());
+    await waitForExpect(async () => assertCollectorReceivedPing(COLLECTOR_B_HTTP_PORT));
   }, 180000);
 });

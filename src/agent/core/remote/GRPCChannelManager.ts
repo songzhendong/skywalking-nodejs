@@ -99,6 +99,7 @@ export default class GRPCChannelManager implements BootService {
     return Number.MAX_SAFE_INTEGER;
   }
 
+  /** Align with grpc-js connectivity; avoid permanent DISCONNECT while channel stays READY. */
   reportError(error: unknown): void {
     if (!isGrpcNetworkError(error)) {
       logger.debug('gRPC report error (ignored): %s', error);
@@ -107,8 +108,24 @@ export default class GRPCChannelManager implements BootService {
     if (this.closed) {
       return;
     }
-    logger.debug('gRPC network error, schedule reconnect: %s', error);
+
+    const managed = this.managedChannel;
+    if (!managed) {
+      logger.debug('gRPC network error without channel, schedule reconnect: %s', error);
+      this.reconnect = true;
+      this.notify(GRPCChannelStatus.DISCONNECT);
+      return;
+    }
+
     this.reconnect = true;
+
+    if (managed.isConnected(false)) {
+      logger.debug('gRPC network error but channel still connected: %s', error);
+      this.notify(GRPCChannelStatus.CONNECTED);
+      return;
+    }
+
+    logger.debug('gRPC network error, schedule reconnect: %s', error);
     this.notify(GRPCChannelStatus.DISCONNECT);
   }
 
@@ -163,11 +180,14 @@ export default class GRPCChannelManager implements BootService {
       if (config.isResolveDnsPeriodically && this.reconnect) {
         const staticEntries = parseStaticBackendAddresses(config.collectorAddress ?? '');
         this.grpcServers = await expandBackendAddresses(staticEntries, true);
+        if (this.closed) {
+          return;
+        }
       } else if (this.grpcServers.length === 0) {
         this.grpcServers = parseStaticBackendAddresses(config.collectorAddress ?? '');
       }
 
-      if (!this.reconnect) {
+      if (!this.reconnect || this.closed) {
         return;
       }
 
@@ -176,6 +196,8 @@ export default class GRPCChannelManager implements BootService {
         return;
       }
 
+      // Java parity: rebuild channel only when random index != selectedIdx.
+      // Same index with a changed resolved ip:port does NOT trigger rebuild (see Java GRPCChannelManager.run()).
       const index = Math.abs(Math.floor(Math.random() * this.grpcServers.length));
       if (index !== this.selectedIdx) {
         await this.switchToServer(this.grpcServers[index], index);
@@ -226,6 +248,10 @@ export default class GRPCChannelManager implements BootService {
   }
 
   private async switchToServer(target: string, index: number): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+
     const { host, port: portText } = splitTarget(target);
     const port = Number.parseInt(portText, 10);
     if (!host || Number.isNaN(port)) {
@@ -260,7 +286,7 @@ export default class GRPCChannelManager implements BootService {
     const generation = this.watcherGeneration;
     const channel = managed.getChannel();
     const currentState = channel.getConnectivityState(true);
-    channel.watchConnectivityState(currentState, Infinity, (error) => {
+    channel.watchConnectivityState(currentState, Date.now() + 86_400_000, (error) => {
       if (this.closed || this.managedChannel !== managed || this.watcherGeneration !== generation) {
         return;
       }

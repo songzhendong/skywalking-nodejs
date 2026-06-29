@@ -26,6 +26,7 @@ import { TraceSegmentReportServiceClient } from '../../../proto/language-agent/T
 import { emitter } from '../../../lib/EventEmitter';
 import Segment from '../../../trace/context/Segment';
 import GRPCChannelManager from './GRPCChannelManager';
+import { grpcUpstreamDeadlineMs } from './GrpcUpstreamOptions';
 import { GRPCChannelListener } from './GRPCChannelListener';
 import { GRPCChannelStatus } from './GRPCChannelStatus';
 
@@ -34,15 +35,28 @@ const logReportError = throttled(logger, 'error', 30000);
 const logBufferFull = throttled(logger, 'warn', 30000);
 
 export default class TraceSegmentServiceClient implements BootService, GRPCChannelListener {
-  private reporterClient!: TraceSegmentReportServiceClient;
+  private closed = false;
+  private channelManager?: GRPCChannelManager;
+  private status = GRPCChannelStatus.DISCONNECT;
+  private reporterClient?: TraceSegmentReportServiceClient;
   private readonly buffer: Segment[] = [];
   private timeout?: NodeJS.Timeout;
-  private segmentFinishedListener!: (segment: Segment) => void;
+  private reporting?: Promise<void>;
+  private segmentFinishedListener?: (segment: Segment) => void;
 
   prepare(): void {
-    ServiceManager.INSTANCE.findService(GRPCChannelManager)!.addChannelListener(this);
+    this.channelManager = ServiceManager.INSTANCE.findService(GRPCChannelManager);
+    this.channelManager?.addChannelListener(this);
+
+    if (this.segmentFinishedListener) {
+      emitter.off('segment-finished', this.segmentFinishedListener);
+    }
 
     this.segmentFinishedListener = (segment: Segment) => {
+      if (this.closed) {
+        return;
+      }
+
       if (this.buffer.length >= config.maxBufferSize) {
         logBufferFull(
           `Trace buffer reached maximum size (${config.maxBufferSize}); discarding oldest segments. The collector at ${config.collectorAddress} is likely unreachable.`,
@@ -58,15 +72,16 @@ export default class TraceSegmentServiceClient implements BootService, GRPCChann
   }
 
   boot(): void {
-    this.timeout = setTimeout(this.reportFunction.bind(this), 1000) as unknown as NodeJS.Timeout;
-    this.timeout.unref();
+    this.scheduleNextReport();
   }
 
   onComplete(): void {}
 
   shutdown(): void {
+    this.closed = true;
     if (this.segmentFinishedListener) {
       emitter.off('segment-finished', this.segmentFinishedListener);
+      this.segmentFinishedListener = undefined;
     }
 
     if (this.timeout) {
@@ -74,7 +89,10 @@ export default class TraceSegmentServiceClient implements BootService, GRPCChann
       this.timeout = undefined;
     }
 
+    this.reporting = undefined;
+    this.reporterClient = undefined;
     this.buffer.length = 0;
+    this.channelManager = undefined;
     logger.info('TraceSegmentServiceClient destroyed and resources cleaned up');
   }
 
@@ -83,51 +101,81 @@ export default class TraceSegmentServiceClient implements BootService, GRPCChann
   }
 
   statusChanged(status: GRPCChannelStatus): void {
-    if (status === GRPCChannelStatus.CONNECTED) {
-      this.reporterClient = this.createReporterClient();
-    }
+    this.status = status;
+    this.reporterClient = status === GRPCChannelStatus.CONNECTED ? this.createReporterClient() : undefined;
   }
 
-  private createReporterClient(): TraceSegmentReportServiceClient {
-    const channelManager = ServiceManager.INSTANCE.findService(GRPCChannelManager)!;
+  private createReporterClient(): TraceSegmentReportServiceClient | undefined {
+    if (!this.channelManager) {
+      return undefined;
+    }
+
     return new TraceSegmentReportServiceClient(
-      channelManager.resolveAddress(),
+      this.channelManager.resolveAddress(),
       grpc.credentials.createInsecure(),
-      channelManager.getClientOptions(),
+      this.channelManager.getClientOptions(),
     );
   }
 
-  private get isConnected(): boolean {
-    return ServiceManager.INSTANCE.findService(GRPCChannelManager)!.isConnected();
+  private scheduleNextReport(): void {
+    if (this.closed || this.timeout) {
+      return;
+    }
+
+    this.timeout = setTimeout(() => {
+      this.timeout = undefined;
+      if (this.closed) {
+        return;
+      }
+      void this.reportOnce().finally(() => this.scheduleNextReport());
+    }, 1000) as unknown as NodeJS.Timeout;
+    this.timeout.unref();
   }
 
-  private reportFunction(callback?: () => void) {
-    emitter.emit('segments-sent');
+  private reportOnce(): Promise<void> {
+    if (this.closed) {
+      return Promise.resolve();
+    }
 
-    try {
+    if (this.reporting) {
+      return this.reporting;
+    }
+
+    this.reporting = this.doReport().finally(() => {
+      this.reporting = undefined;
+    });
+    return this.reporting;
+  }
+
+  private doReport(): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.closed) {
+        resolve();
+        return;
+      }
+
+      emitter.emit('segments-sent');
+
       if (this.buffer.length === 0) {
-        callback?.();
+        resolve();
         return;
       }
 
-      if (!this.isConnected || !this.reporterClient) {
-        callback?.();
+      if (this.status !== GRPCChannelStatus.CONNECTED || !this.reporterClient) {
+        resolve();
         return;
       }
 
-      const stream = this.reporterClient.collect(
-        new grpc.Metadata(),
-        { deadline: Date.now() + config.traceTimeout },
-        (error) => {
+      let stream: ReturnType<TraceSegmentReportServiceClient['collect']> | undefined;
+      try {
+        stream = this.reporterClient.collect(new grpc.Metadata(), { deadline: grpcUpstreamDeadlineMs() }, (error) => {
           if (error) {
             logReportError('Failed to report trace data', error);
-            ServiceManager.INSTANCE.findService(GRPCChannelManager)!.reportError(error);
+            this.reportGrpcError(error);
           }
-          callback?.();
-        },
-      );
+          resolve();
+        });
 
-      try {
         for (const segment of this.buffer) {
           if (segment) {
             if (logger._isDebugEnabled) {
@@ -136,22 +184,45 @@ export default class TraceSegmentServiceClient implements BootService, GRPCChann
             stream.write(segment.transform());
           }
         }
+      } catch (error) {
+        logReportError('Failed to report trace data', error);
+        this.reportGrpcError(error);
+        resolve();
       } finally {
         this.buffer.length = 0;
+        try {
+          stream?.end();
+        } catch (error) {
+          logReportError('Failed to end trace collect stream', error);
+          resolve();
+        }
       }
+    });
+  }
 
-      stream.end();
-    } finally {
-      this.timeout = setTimeout(this.reportFunction.bind(this), 1000) as unknown as NodeJS.Timeout;
-      this.timeout.unref();
+  private reportGrpcError(error: unknown): void {
+    if (this.closed) {
+      return;
     }
+
+    this.channelManager?.reportError(error);
   }
 
   flush(): Promise<unknown> | null {
-    return this.buffer.length === 0
-      ? null
-      : new Promise((resolve) => {
-          this.reportFunction(resolve);
-        });
+    if (this.closed) {
+      return null;
+    }
+
+    if (this.timeout) {
+      clearTimeout(this.timeout);
+      this.timeout = undefined;
+    }
+
+    if (this.buffer.length === 0) {
+      this.scheduleNextReport();
+      return null;
+    }
+
+    return this.reportOnce().finally(() => this.scheduleNextReport());
   }
 }

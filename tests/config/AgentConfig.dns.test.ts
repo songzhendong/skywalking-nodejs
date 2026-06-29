@@ -83,3 +83,17 @@ describe('AgentConfig DNS / channel settings (Java collector.* parity)', () => {
     expect(cfg.secure).toBe(false);
   });
 });
+it('reads SW_AGENT_COLLECTOR_GRPC_UPSTREAM_TIMEOUT', () => {
+  process.env.SW_AGENT_COLLECTOR_GRPC_UPSTREAM_TIMEOUT = '45';
+  jest.resetModules();
+  const cfg = require('../../src/config/AgentConfig').default;
+  expect(cfg.grpcUpstreamTimeout).toBe(45);
+});
+
+it('defaults grpcUpstreamTimeout to 30 seconds (Java GRPC_UPSTREAM_TIMEOUT)', () => {
+  delete process.env.SW_AGENT_COLLECTOR_GRPC_UPSTREAM_TIMEOUT;
+  delete process.env.SW_AGENT_TRACE_TIMEOUT;
+  jest.resetModules();
+  const cfg = require('../../src/config/AgentConfig').default;
+  expect(cfg.grpcUpstreamTimeout).toBe(30);
+});
