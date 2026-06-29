@@ -17,19 +17,82 @@
  *
  */
 
+import fs from 'fs';
 import * as grpc from '@grpc/grpc-js';
+import { resolveAgentPath } from '../boot/AgentPackagePath';
 import config from '../../../config/AgentConfig';
+import { createLogger } from '../../../logging';
 import ChannelBuilder, { ChannelBuildContext } from './ChannelBuilder';
 
-/** When SW_AGENT_SECURE=true, upgrade channel credentials to TLS (Java TLSChannelBuilder simplified). */
+const logger = createLogger(__filename);
+
+function readTlsFile(configuredPath: string | undefined): Buffer | null {
+  const filePath = resolveAgentPath(configuredPath);
+  if (!filePath) {
+    return null;
+  }
+  try {
+    if (fs.statSync(filePath).isFile()) {
+      return fs.readFileSync(filePath);
+    }
+  } catch {
+    // missing or unreadable — treated as absent
+  }
+  return null;
+}
+
+function isCaFileAvailable(): boolean {
+  const filePath = resolveAgentPath(config.sslTrustedCaPath);
+  if (!filePath) {
+    return false;
+  }
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** Java: FORCE_TLS || ca.crt exists; Node also accepts legacy SW_AGENT_SECURE. */
+function shouldUseTls(): boolean {
+  return Boolean(config.secure || config.forceTls || isCaFileAvailable());
+}
+
+/**
+ * If only ca.crt exists, start TLS. If cert, key and ca files exist, enable mTLS.
+ * Aligned with Java {@code TLSChannelBuilder}.
+ */
 export default class TLSChannelBuilder implements ChannelBuilder {
   build(context: ChannelBuildContext): ChannelBuildContext {
-    if (config.secure) {
-      return {
-        ...context,
-        credentials: grpc.credentials.createSsl(),
-      };
+    if (!shouldUseTls()) {
+      return context;
     }
-    return context;
+
+    const rootCerts = readTlsFile(config.sslTrustedCaPath);
+    let privateKey = readTlsFile(config.sslKeyPath);
+    let certChain = readTlsFile(config.sslCertChainPath);
+
+    const certPathSet = Boolean(config.sslCertChainPath);
+    const keyPathSet = Boolean(config.sslKeyPath);
+    if (certPathSet && keyPathSet && (!privateKey || !certChain)) {
+      logger.warn('Failed to enable mTLS caused by cert or key cannot be found.');
+      privateKey = null;
+      certChain = null;
+    } else if (certPathSet !== keyPathSet) {
+      privateKey = null;
+      certChain = null;
+    }
+
+    const credentials = grpc.credentials.createSsl(rootCerts, privateKey, certChain);
+    const options: grpc.ChannelOptions = { ...context.options };
+    if (config.sslTargetNameOverride) {
+      options['grpc.ssl_target_name_override'] = config.sslTargetNameOverride;
+    }
+
+    return {
+      ...context,
+      credentials,
+      options,
+    };
   }
 }

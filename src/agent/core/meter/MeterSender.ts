@@ -64,7 +64,7 @@ export default class MeterSender implements BootService, GRPCChannelListener {
 
   private createReporterClient(): MeterReportServiceClient {
     return new MeterReportServiceClient(
-      config.collectorAddress,
+      ServiceManager.INSTANCE.findService(GRPCChannelManager)!.resolveAddress(),
       grpc.credentials.createInsecure(),
       ServiceManager.INSTANCE.findService(GRPCChannelManager)!.getClientOptions(),
     );

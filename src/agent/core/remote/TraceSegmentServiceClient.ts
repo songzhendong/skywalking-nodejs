@@ -91,7 +91,7 @@ export default class TraceSegmentServiceClient implements BootService, GRPCChann
   private createReporterClient(): TraceSegmentReportServiceClient {
     const channelManager = ServiceManager.INSTANCE.findService(GRPCChannelManager)!;
     return new TraceSegmentReportServiceClient(
-      config.collectorAddress,
+      channelManager.resolveAddress(),
       grpc.credentials.createInsecure(),
       channelManager.getClientOptions(),
     );

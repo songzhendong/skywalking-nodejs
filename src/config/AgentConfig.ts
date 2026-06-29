@@ -24,6 +24,11 @@ export type AgentConfig = {
   serviceInstance?: string;
   collectorAddress?: string;
   secure?: boolean;
+  forceTls?: boolean;
+  sslTrustedCaPath?: string;
+  sslCertChainPath?: string;
+  sslKeyPath?: string;
+  sslTargetNameOverride?: string;
   authorization?: string;
   maxBufferSize?: number;
   coldEndpoint?: boolean;
@@ -47,6 +52,9 @@ export type AgentConfig = {
   runtimeMetricsCollectPeriod?: number;
   runtimeMetricsReportPeriod?: number;
   runtimeMetricsBufferSize?: number;
+  grpcChannelCheckInterval?: number;
+  forceReconnectionPeriod?: number;
+  isResolveDnsPeriodically?: boolean;
   /** @deprecated use runtimeMetricsReporterActive */
   nvmMetricsReporterActive?: boolean;
   /** @deprecated use runtimeMetricsCollectPeriod */
@@ -171,6 +179,17 @@ const _config = {
     })(),
   collectorAddress: process.env.SW_AGENT_COLLECTOR_BACKEND_SERVICES || '127.0.0.1:11800',
   secure: process.env.SW_AGENT_SECURE?.toLowerCase() === 'true',
+  forceTls: process.env.SW_AGENT_FORCE_TLS?.toLowerCase() === 'true',
+  sslTrustedCaPath: ((): string => {
+    const configured = process.env.SW_AGENT_SSL_TRUSTED_CA_PATH;
+    if (configured === undefined) {
+      return 'ca/ca.crt';
+    }
+    return configured;
+  })(),
+  sslCertChainPath: process.env.SW_AGENT_SSL_CERT_CHAIN_PATH ?? '',
+  sslKeyPath: process.env.SW_AGENT_SSL_KEY_PATH ?? '',
+  sslTargetNameOverride: process.env.SW_AGENT_SSL_TARGET_NAME_OVERRIDE ?? '',
   authorization: process.env.SW_AGENT_AUTHENTICATION,
   maxBufferSize: ((n) => (Number.isSafeInteger(n) && n > 0 ? n : 1000))(
     Number.parseInt(process.env.SW_AGENT_MAX_BUFFER_SIZE ?? '', 10),
@@ -227,6 +246,13 @@ const _config = {
       10,
     ),
   ),
+  grpcChannelCheckInterval: ((n) => (Number.isSafeInteger(n) && n > 0 ? n : 30))(
+    Number.parseInt(process.env.SW_AGENT_GRPC_CHANNEL_CHECK_INTERVAL ?? '', 10),
+  ),
+  forceReconnectionPeriod: ((n) => (Number.isSafeInteger(n) && n > 0 ? n : 1))(
+    Number.parseInt(process.env.SW_AGENT_FORCE_RECONNECTION_PERIOD ?? '', 10),
+  ),
+  isResolveDnsPeriodically: process.env.SW_AGENT_IS_RESOLVE_DNS_PERIODICALLY?.toLowerCase() === 'true',
 };
 
 export default _config;

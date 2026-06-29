@@ -108,7 +108,7 @@ export default class ServiceManagementClient implements BootService, GRPCChannel
   private createManagementClient(): ManagementServiceClient {
     const channelManager = ServiceManager.INSTANCE.findService(GRPCChannelManager)!;
     return new ManagementServiceClient(
-      config.collectorAddress,
+      channelManager.resolveAddress(),
       grpc.credentials.createInsecure(),
       channelManager.getClientOptions(),
     );
