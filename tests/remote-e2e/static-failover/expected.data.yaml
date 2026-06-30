@@ -1,3 +1,4 @@
+#
 # Licensed to the Apache Software Foundation (ASF) under one or more
 # contributor license agreements.  See the NOTICE file distributed with
 # this work for additional information regarding copyright ownership.
@@ -12,17 +13,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-ARG SW_NODE_VERSION
-
-FROM node:${SW_NODE_VERSION}
-
-ARG ROOT=.
-
-WORKDIR /app
-
-ADD $ROOT /app
-
-ARG NPM_REGISTRY=
-RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi \
-  && npm install request && npm install
+#
+segmentItems:
+  - serviceName: server
+    segmentSize: gt 0
+    segments:
+      - segmentId: not null
+        spans:
+          - operationName: GET:/ping
+            parentSpanId: -1
+            spanId: 0
+            spanLayer: Http
+            startTime: gt 0
+            endTime: gt 0
+            componentId: 49
+            spanType: Entry
+            tags:
+              - key: http.status_code
+                value: '200'
+              - key: http.method
+                value: GET

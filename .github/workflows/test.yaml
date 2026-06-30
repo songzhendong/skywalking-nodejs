@@ -69,6 +69,7 @@ jobs:
         plugin: ${{ fromJson(needs.build-matrix.outputs.plugins) }}
     env:
       SW_NODE_VERSION: ${{ matrix.node-version }}
+      TESTCONTAINERS_RYUK_DISABLED: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,6 +91,71 @@ jobs:
         run: |
           npm i
           npm run test tests/plugins/${{ matrix.plugin }}/
+
+
+  TestRemoteE2E:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [ build-matrix ]
+    strategy:
+      matrix:
+        node-version: [ 22 ]
+        case: [ static-failover, dns-re-resolve ]
+    env:
+      SW_NODE_VERSION: ${{ matrix.node-version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Set Up NodeJS ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Pre-build E2E agent image
+        run: |
+          docker build -f tests/plugins/common/Dockerfile.agent \
+            --build-arg SW_NODE_VERSION=${{ matrix.node-version }} \
+            -t skywalking-nodejs-e2e-agent:${{ matrix.node-version }} .
+
+      - name: Remote E2E On Node@${{ matrix.node-version }} (${{ matrix.case }})
+        run: |
+          npm i
+          npm run test tests/remote-e2e/${{ matrix.case }}/
+
+
+  TestUnitRemote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Set Up NodeJS 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Remote unit tests
+        run: |
+          npm i
+          npx jest tests/remote/ tests/config/AgentConfig.dns.test.ts --runInBand
 
   TestLib:
     runs-on: ubuntu-latest
