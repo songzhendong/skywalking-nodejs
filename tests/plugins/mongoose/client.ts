@@ -26,7 +26,7 @@ process.env.SW_AGENT_DISABLE_PLUGINS = 'MongoDBPlugin';
 agent.start({
   serviceName: 'client',
   maxBufferSize: 1000,
-})
+});
 
 const server = http.createServer((req, res) => {
   http

@@ -25,6 +25,7 @@ const MAX_INBOUND_MESSAGE_SIZE = 1024 * 1024 * 50;
 export default class StandardChannelBuilder implements ChannelBuilder {
   build(context: ChannelBuildContext): ChannelBuildContext {
     return {
+      ...context,
       credentials: grpc.credentials.createInsecure(),
       options: {
         ...context.options,

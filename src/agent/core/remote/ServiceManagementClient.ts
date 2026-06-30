@@ -28,6 +28,7 @@ import { ManagementServiceClient } from '../../../proto/management/Management_gr
 import { InstancePingPkg, InstanceProperties } from '../../../proto/management/Management_pb';
 import { KeyStringValuePair } from '../../../proto/common/Common_pb';
 import GRPCChannelManager from './GRPCChannelManager';
+import { grpcUpstreamDeadlineMs } from './GrpcUpstreamOptions';
 import { GRPCChannelListener } from './GRPCChannelListener';
 import { GRPCChannelStatus } from './GRPCChannelStatus';
 
@@ -35,11 +36,21 @@ const logger = createLogger(__filename);
 const logHeartbeatError = throttled(logger, 'error', 30000);
 
 export default class ServiceManagementClient implements BootService, GRPCChannelListener {
-  private managementServiceClient!: ManagementServiceClient;
+  private closed = false;
+  private channelManager?: GRPCChannelManager;
+  private status = GRPCChannelStatus.DISCONNECT;
+  private managementServiceClient?: ManagementServiceClient;
   private heartbeatTimer?: NodeJS.Timeout;
+  private keepAlivePkg?: InstancePingPkg;
+  private instanceProperties?: InstanceProperties;
+  private sendPropertiesCounter = 0;
+
+  /** Same default as Java Config.Collector.PROPERTIES_REPORT_PERIOD_FACTOR (10). */
+  private static readonly PROPERTIES_REPORT_PERIOD_FACTOR = 10;
 
   prepare(): void {
-    ServiceManager.INSTANCE.findService(GRPCChannelManager)!.addChannelListener(this);
+    this.channelManager = ServiceManager.INSTANCE.findService(GRPCChannelManager);
+    this.channelManager?.addChannelListener(this);
   }
 
   boot(): void {
@@ -52,11 +63,9 @@ export default class ServiceManagementClient implements BootService, GRPCChannel
       return;
     }
 
-    const keepAlivePkg = new InstancePingPkg()
-      .setService(config.serviceName)
-      .setServiceinstance(config.serviceInstance);
+    this.keepAlivePkg = new InstancePingPkg().setService(config.serviceName).setServiceinstance(config.serviceInstance);
 
-    const instanceProperties = new InstanceProperties()
+    this.instanceProperties = new InstanceProperties()
       .setService(config.serviceName)
       .setServiceinstance(config.serviceInstance)
       .setPropertiesList([
@@ -66,32 +75,21 @@ export default class ServiceManagementClient implements BootService, GRPCChannel
         new KeyStringValuePair().setKey('Process No.').setValue(`${process.pid}`),
       ]);
 
-    this.heartbeatTimer = setInterval(() => {
-      if (!this.managementServiceClient) {
-        return;
-      }
-      this.managementServiceClient.reportInstanceProperties(instanceProperties, new grpc.Metadata(), (error) => {
-        if (error) {
-          logHeartbeatError('Failed to send heartbeat', error);
-          ServiceManager.INSTANCE.findService(GRPCChannelManager)!.reportError(error);
-        }
-      });
-      this.managementServiceClient.keepAlive(keepAlivePkg, new grpc.Metadata(), (error) => {
-        if (error) {
-          logHeartbeatError('Failed to send heartbeat', error);
-          ServiceManager.INSTANCE.findService(GRPCChannelManager)!.reportError(error);
-        }
-      });
-    }, 20000).unref();
+    const heartbeatPeriodMs = (config.collectorHeartbeatPeriod ?? 20) * 1000;
+    this.heartbeatTimer = setInterval(() => this.sendHeartbeat(), heartbeatPeriodMs) as NodeJS.Timeout;
+    this.heartbeatTimer.unref();
   }
 
   onComplete(): void {}
 
   shutdown(): void {
+    this.closed = true;
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
     }
+    this.managementServiceClient = undefined;
+    this.channelManager = undefined;
     logger.info('ServiceManagementClient destroyed and resources cleaned up');
   }
 
@@ -100,18 +98,66 @@ export default class ServiceManagementClient implements BootService, GRPCChannel
   }
 
   statusChanged(status: GRPCChannelStatus): void {
-    if (status === GRPCChannelStatus.CONNECTED) {
-      this.managementServiceClient = this.createManagementClient();
-    }
+    this.status = status;
+    this.managementServiceClient = status === GRPCChannelStatus.CONNECTED ? this.createManagementClient() : undefined;
   }
 
-  private createManagementClient(): ManagementServiceClient {
-    const channelManager = ServiceManager.INSTANCE.findService(GRPCChannelManager)!;
+  private sendHeartbeat(): void {
+    if (
+      this.closed ||
+      this.status !== GRPCChannelStatus.CONNECTED ||
+      !this.managementServiceClient ||
+      !this.instanceProperties ||
+      !this.keepAlivePkg
+    ) {
+      return;
+    }
+
+    const options = { deadline: grpcUpstreamDeadlineMs() };
+    const reportProperties =
+      Math.abs(this.sendPropertiesCounter++) % ServiceManagementClient.PROPERTIES_REPORT_PERIOD_FACTOR === 0;
+
+    if (reportProperties) {
+      this.managementServiceClient.reportInstanceProperties(
+        this.instanceProperties,
+        new grpc.Metadata(),
+        options,
+        (error) => {
+          if (error) {
+            logHeartbeatError('Failed to send instance properties', error);
+            this.reportGrpcError(error);
+          }
+        },
+      );
+      return;
+    }
+
+    this.managementServiceClient.keepAlive(this.keepAlivePkg, new grpc.Metadata(), options, (error) => {
+      if (error) {
+        logHeartbeatError('Failed to send heartbeat', error);
+        this.reportGrpcError(error);
+      }
+    });
+  }
+
+  private createManagementClient(): ManagementServiceClient | undefined {
+    if (!this.channelManager) {
+      return undefined;
+    }
+
     return new ManagementServiceClient(
-      config.collectorAddress,
+      this.channelManager.resolveAddress(),
       grpc.credentials.createInsecure(),
-      channelManager.getClientOptions(),
+      this.channelManager.getClientOptions(),
     );
+  }
+
+  private reportGrpcError(error: unknown): void {
+    if (this.closed) {
+      return;
+    }
+
+    this.channelManager?.reportError(error);
   }
 
   flush(): Promise<unknown> | null {
