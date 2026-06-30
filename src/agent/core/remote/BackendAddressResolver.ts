@@ -101,3 +101,19 @@ export async function expandBackendAddresses(
 
   return Array.from(new Set(resolved));
 }
+/**
+ * When DNS expands a hostname to ip:port, grpc-js must not use the IP as TLS SNI.
+ * Derive the configured hostname from collectorAddress (Java uses static name for SSL).
+ */
+export function deriveTlsServerNameForConnectHost(connectHost: string, collectorAddress: string): string | undefined {
+  if (!isLiteralIp(connectHost)) {
+    return undefined;
+  }
+  for (const entry of parseStaticBackendAddresses(collectorAddress)) {
+    const { host } = splitHostPort(entry);
+    if (host && !isLiteralIp(host)) {
+      return host;
+    }
+  }
+  return undefined;
+}

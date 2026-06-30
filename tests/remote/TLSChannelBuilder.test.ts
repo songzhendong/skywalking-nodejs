@@ -25,6 +25,7 @@ import * as grpc from '@grpc/grpc-js';
 import { getAgentPackagePath } from '../../src/agent/core/boot/AgentPackagePath';
 import config from '../../src/config/AgentConfig';
 import TLSChannelBuilder from '../../src/agent/core/remote/TLSChannelBuilder';
+import StandardChannelBuilder from '../../src/agent/core/remote/StandardChannelBuilder';
 
 describe('TLSChannelBuilder (Java TLSChannelBuilder parity)', () => {
   const original = {
@@ -33,6 +34,7 @@ describe('TLSChannelBuilder (Java TLSChannelBuilder parity)', () => {
     sslTrustedCaPath: config.sslTrustedCaPath,
     sslCertChainPath: config.sslCertChainPath,
     sslKeyPath: config.sslKeyPath,
+    collectorAddress: config.collectorAddress,
   };
   const baseContext = {
     credentials: grpc.credentials.createInsecure(),
@@ -49,6 +51,7 @@ describe('TLSChannelBuilder (Java TLSChannelBuilder parity)', () => {
     config.sslTrustedCaPath = original.sslTrustedCaPath;
     config.sslCertChainPath = original.sslCertChainPath;
     config.sslKeyPath = original.sslKeyPath;
+    config.collectorAddress = original.collectorAddress;
     jest.restoreAllMocks();
   });
 
@@ -193,5 +196,46 @@ describe('TLSChannelBuilder (Java TLSChannelBuilder parity)', () => {
 
     expect(createSslSpy).not.toHaveBeenCalled();
     expect(result.credentials).toBe(insecure);
+  });
+
+  it('sets grpc.ssl_target_name_override when connecting to resolved IP under TLS', () => {
+    config.secure = true;
+    config.collectorAddress = 'oap:11800';
+    jest.spyOn(grpc.credentials, 'createSsl').mockReturnValue({} as grpc.ChannelCredentials);
+
+    const result = new TLSChannelBuilder().build({
+      ...baseContext,
+      connectHost: '10.0.0.1',
+    });
+
+    expect(result.options['grpc.ssl_target_name_override']).toBe('oap');
+  });
+
+  it('does not set grpc.ssl_target_name_override when connect host is hostname', () => {
+    config.secure = true;
+    config.collectorAddress = 'oap:11800';
+    jest.spyOn(grpc.credentials, 'createSsl').mockReturnValue({} as grpc.ChannelCredentials);
+
+    const result = new TLSChannelBuilder().build({
+      ...baseContext,
+      connectHost: 'oap',
+    });
+
+    expect(result.options['grpc.ssl_target_name_override']).toBeUndefined();
+  });
+
+  it('StandardChannelBuilder preserves connectHost for TLS SNI override chain', () => {
+    config.secure = true;
+    config.collectorAddress = 'oap:11800';
+    jest.spyOn(grpc.credentials, 'createSsl').mockReturnValue({} as grpc.ChannelCredentials);
+
+    const result = new TLSChannelBuilder().build(
+      new StandardChannelBuilder().build({
+        ...baseContext,
+        connectHost: '10.0.0.1',
+      }),
+    );
+
+    expect(result.options['grpc.ssl_target_name_override']).toBe('oap');
   });
 });

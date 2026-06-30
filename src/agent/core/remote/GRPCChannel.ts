@@ -30,6 +30,7 @@ export default class GRPCChannel {
     let context: ChannelBuildContext = {
       credentials: grpc.credentials.createInsecure(),
       options: {},
+      connectHost: host,
     };
 
     for (const builder of channelBuilders) {

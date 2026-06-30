@@ -31,6 +31,7 @@ jest.mock('../../src/logging', () => ({
 
 import {
   expandBackendAddresses,
+  deriveTlsServerNameForConnectHost,
   isLiteralIp,
   parseStaticBackendAddresses,
 } from '../../src/agent/core/remote/BackendAddressResolver';
@@ -137,5 +138,18 @@ describe('BackendAddressResolver (Java InetAddress.getAllByName parity)', () => 
     ]);
     const result = await expandBackendAddresses(['v6-only.local:11800'], true, lookup);
     expect(result).toEqual(['2001:db8::a:11800', '2001:db8::b:11800']);
+  });
+
+  it('derives TLS server name from collector hostname when connect host is IP', () => {
+    expect(deriveTlsServerNameForConnectHost('10.0.0.1', 'oap:11800')).toBe('oap');
+    expect(deriveTlsServerNameForConnectHost('10.0.0.1', 'oap:11800,backup:11800')).toBe('oap');
+  });
+
+  it('does not derive TLS server name when connect host is already a hostname', () => {
+    expect(deriveTlsServerNameForConnectHost('oap', 'oap:11800')).toBeUndefined();
+  });
+
+  it('does not derive TLS server name when collector address is IP-only', () => {
+    expect(deriveTlsServerNameForConnectHost('10.0.0.2', '127.0.0.1:11800')).toBeUndefined();
   });
 });

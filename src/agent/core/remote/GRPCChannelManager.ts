@@ -23,7 +23,11 @@ import config from '../../../config/AgentConfig';
 import { createLogger } from '../../../logging';
 import AgentIDDecorator from './AgentIDDecorator';
 import AuthenticationDecorator from './AuthenticationDecorator';
-import { expandBackendAddresses, parseStaticBackendAddresses } from './BackendAddressResolver';
+import {
+  deriveTlsServerNameForConnectHost,
+  expandBackendAddresses,
+  parseStaticBackendAddresses,
+} from './BackendAddressResolver';
 import GRPCChannel from './GRPCChannel';
 import { GRPCChannelListener } from './GRPCChannelListener';
 import { GRPCChannelStatus } from './GRPCChannelStatus';
@@ -59,15 +63,15 @@ export default class GRPCChannelManager implements BootService {
   private checkInFlight = false;
   private watcherGeneration = 0;
 
+  /** Logical target for gRPC client stubs (hostname when channel uses resolved IP). */
   resolveAddress(): string {
-    if (this.currentTarget) {
-      return this.currentTarget;
-    }
-    const first = parseStaticBackendAddresses(config.collectorAddress ?? '')[0];
-    if (!first) {
+    const target = this.currentTarget ?? parseStaticBackendAddresses(config.collectorAddress ?? '')[0];
+    if (!target) {
       throw new Error('collectorAddress is not configured');
     }
-    return first;
+    const { host, port } = splitTarget(target);
+    const logicalHost = deriveTlsServerNameForConnectHost(host, config.collectorAddress ?? '') ?? host;
+    return `${logicalHost}:${port}`;
   }
 
   getChannel(): grpc.Channel {

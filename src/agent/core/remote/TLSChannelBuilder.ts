@@ -24,6 +24,7 @@ import { loadDecryptionKey } from '../util/PrivateKeyUtil';
 import config from '../../../config/AgentConfig';
 import { createLogger } from '../../../logging';
 import ChannelBuilder, { ChannelBuildContext } from './ChannelBuilder';
+import { deriveTlsServerNameForConnectHost } from './BackendAddressResolver';
 
 const logger = createLogger(__filename);
 
@@ -100,11 +101,18 @@ export default class TLSChannelBuilder implements ChannelBuilder {
     }
 
     const credentials = grpc.credentials.createSsl(rootCerts, privateKey, certChain);
+    const options: grpc.ChannelOptions = { ...context.options };
+    const tlsServerName = context.connectHost
+      ? deriveTlsServerNameForConnectHost(context.connectHost, config.collectorAddress ?? '')
+      : undefined;
+    if (tlsServerName) {
+      options['grpc.ssl_target_name_override'] = tlsServerName;
+    }
 
     return {
       ...context,
       credentials,
-      options: { ...context.options },
+      options,
     };
   }
 }

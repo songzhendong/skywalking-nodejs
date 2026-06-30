@@ -76,6 +76,18 @@ describe('GRPCChannelManager (Java DNS re-resolve parity)', () => {
     jest.restoreAllMocks();
   });
 
+  it('returns logical hostname for stub when channel uses resolved IP', async () => {
+    config.collectorAddress = 'oap:11800';
+    config.isResolveDnsPeriodically = true;
+    randomSpy.mockReturnValue(0);
+    jest.spyOn(resolver, 'expandBackendAddresses').mockResolvedValue(['10.0.1.1:11800']);
+
+    manager = new GRPCChannelManager();
+    await manager.runCheck();
+
+    expect(manager.getGrpcServersForTest()).toEqual(['10.0.1.1:11800']);
+    expect(manager.resolveAddress()).toBe('oap:11800');
+  });
   it('resolveAddress returns current target after runCheck selects backend', async () => {
     config.collectorAddress = '127.0.0.1:11800';
     config.isResolveDnsPeriodically = false;
@@ -192,14 +204,14 @@ describe('GRPCChannelManager (Java DNS re-resolve parity)', () => {
 
     manager = new GRPCChannelManager();
     await manager.runCheck();
-    expect(manager.resolveAddress()).toBe('10.0.1.1:11800');
+    expect(manager.resolveAddress()).toBe('oap.test:11800');
     expect(mockShutdownNow).not.toHaveBeenCalled();
 
     manager.reportError({ code: grpc.status.UNAVAILABLE, message: 'fail' } as grpc.ServiceError);
     mockIsConnected.mockReturnValue(true);
     await manager.runCheck();
 
-    expect(manager.resolveAddress()).toBe('10.0.1.1:11800');
+    expect(manager.resolveAddress()).toBe('oap.test:11800');
     expect(mockShutdownNow).not.toHaveBeenCalled();
     expect(manager.getSelectedIdxForTest()).toBe(0);
   });
@@ -271,7 +283,7 @@ describe('GRPCChannelManager (Java DNS re-resolve parity)', () => {
     expect(manager.getReconnectStateForTest()).toBe(true);
 
     await manager.runCheck();
-    expect(manager.resolveAddress()).toBe('10.0.1.1:11800');
+    expect(manager.resolveAddress()).toBe('oap.test:11800');
     expect(manager.getReconnectStateForTest()).toBe(false);
   });
 
@@ -284,12 +296,12 @@ describe('GRPCChannelManager (Java DNS re-resolve parity)', () => {
     manager = new GRPCChannelManager();
     randomSpy.mockReturnValue(0);
     await manager.runCheck();
-    expect(manager.resolveAddress()).toBe('10.0.1.1:11800');
+    expect(manager.resolveAddress()).toBe('oap.test:11800');
 
     manager.reportError({ code: grpc.status.UNAVAILABLE, message: 'fail' } as grpc.ServiceError);
     randomSpy.mockReturnValue(0.99);
     await manager.runCheck();
-    expect(manager.resolveAddress()).toBe('10.0.1.2:11800');
+    expect(manager.resolveAddress()).toBe('oap.test:11800');
   });
 
   it('boot starts periodic check timer (Java GRPC_CHANNEL_CHECK_INTERVAL)', () => {
