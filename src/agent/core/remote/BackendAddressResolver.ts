@@ -23,6 +23,12 @@ import { createLogger } from '../../../logging';
 
 const logger = createLogger(__filename);
 
+/** Cap DNS expansion to avoid unbounded memory on hostile or misconfigured resolvers. */
+export const MAX_DNS_LOOKUP_RECORDS = 64;
+
+/** Abort slow DNS lookups so channel checks do not stall the event loop. */
+export const DNS_LOOKUP_TIMEOUT_MS = 5_000;
+
 export type DnsLookupFn = (
   hostname: string,
   options: { all: true; verbatim?: boolean },
@@ -30,6 +36,32 @@ export type DnsLookupFn = (
 
 const defaultLookup: DnsLookupFn = (hostname, options) =>
   dnsPromises.lookup(hostname, options) as ReturnType<DnsLookupFn>;
+
+export async function lookupBackendHostRecords(
+  hostname: string,
+  lookup: DnsLookupFn = defaultLookup,
+  timeoutMs: number = DNS_LOOKUP_TIMEOUT_MS,
+): Promise<Array<{ address: string; family: number }>> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  try {
+    const records = await Promise.race([
+      lookup(hostname, { all: true, verbatim: true }),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error('DNS lookup timeout')), timeoutMs);
+        timeoutHandle.unref();
+      }),
+    ]);
+    if (records.length > MAX_DNS_LOOKUP_RECORDS) {
+      logger.warn('DNS returned %s records for %s; using first %s', records.length, hostname, MAX_DNS_LOOKUP_RECORDS);
+      return records.slice(0, MAX_DNS_LOOKUP_RECORDS);
+    }
+    return records;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
 
 /** Parse comma-separated backend entries (Java BACKEND_SERVICE split). */
 export function parseStaticBackendAddresses(raw: string): string[] {
@@ -41,26 +73,43 @@ export function parseStaticBackendAddresses(raw: string): string[] {
 }
 
 function isValidHostPortEntry(entry: string): boolean {
-  const parts = entry.split(':');
-  if (parts.length < 2) {
+  try {
+    const { host, port } = splitHostPort(entry);
+    const portNum = Number.parseInt(port, 10);
+    return Boolean(host) && !Number.isNaN(portNum) && portNum > 0 && portNum <= 65535;
+  } catch {
     logger.debug('Service address [%s] format error. Expected host:port', entry);
     return false;
   }
-  const portText = parts[parts.length - 1];
-  const host = parts.slice(0, -1).join(':');
-  const port = Number.parseInt(portText, 10);
-  if (!host || Number.isNaN(port) || port <= 0) {
-    logger.debug('Service address [%s] format error. Expected host:port', entry);
-    return false;
-  }
-  return true;
 }
 
+/** Split host:port, supporting bracketed IPv6 literals such as [::1]:11800. */
 export function splitHostPort(entry: string): { host: string; port: string } {
-  const parts = entry.split(':');
-  const port = parts[parts.length - 1];
-  const host = parts.slice(0, -1).join(':');
-  return { host, port };
+  const trimmed = entry.trim();
+  if (!trimmed) {
+    throw new Error(`Invalid host:port entry: ${entry}`);
+  }
+  if (trimmed.startsWith('[')) {
+    const close = trimmed.indexOf(']');
+    if (close < 0 || trimmed[close + 1] !== ':') {
+      throw new Error(`Invalid host:port entry: ${entry}`);
+    }
+    return { host: trimmed.slice(1, close), port: trimmed.slice(close + 2) };
+  }
+  const lastColon = trimmed.lastIndexOf(':');
+  if (lastColon <= 0) {
+    throw new Error(`Invalid host:port entry: ${entry}`);
+  }
+  return { host: trimmed.slice(0, lastColon), port: trimmed.slice(lastColon + 1) };
+}
+
+/** Format host:port for grpc target strings; IPv6 hosts are bracketed. */
+export function formatHostPort(host: string, port: string | number): string {
+  const portText = String(port);
+  if (net.isIPv6(host)) {
+    return `[${host}]:${portText}`;
+  }
+  return `${host}:${portText}`;
 }
 
 export function isLiteralIp(host: string): boolean {
@@ -85,14 +134,14 @@ export async function expandBackendAddresses(
     const { host, port } = splitHostPort(entry);
 
     if (!resolveDns || isLiteralIp(host)) {
-      resolved.push(`${host}:${port}`);
+      resolved.push(formatHostPort(host, port));
       continue;
     }
 
     try {
-      const records = await lookup(host, { all: true, verbatim: true });
+      const records = await lookupBackendHostRecords(host, lookup);
       for (const record of records) {
-        resolved.push(`${record.address}:${port}`);
+        resolved.push(formatHostPort(record.address, port));
       }
     } catch (error) {
       logger.error('Failed to resolve %s of backend service.', host, error);
@@ -101,6 +150,7 @@ export async function expandBackendAddresses(
 
   return Array.from(new Set(resolved));
 }
+
 /**
  * When DNS expands a hostname to ip:port, grpc-js must not use the IP as TLS SNI.
  * Derive the configured hostname from collectorAddress (Java uses static name for SSL).

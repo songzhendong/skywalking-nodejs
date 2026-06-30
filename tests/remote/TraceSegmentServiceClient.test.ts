@@ -97,8 +97,10 @@ describe('TraceSegmentServiceClient', () => {
     mockCollect.mockClear();
     mockGrpcUpstreamDeadlineMs.mockClear();
     mockChannelManager.reportError.mockClear();
-    mockStream.write.mockClear();
-    mockStream.end.mockClear();
+    mockStream.write.mockReset();
+    mockStream.write.mockImplementation(() => undefined);
+    mockStream.end.mockReset();
+    mockStream.end.mockImplementation(() => undefined);
     pendingCollectCallback = undefined;
     mockCollect.mockImplementation((_meta, _opts, cb) => {
       pendingCollectCallback = cb;
@@ -128,6 +130,35 @@ describe('TraceSegmentServiceClient', () => {
 
     expect(mockGrpcUpstreamDeadlineMs).toHaveBeenCalled();
     expect(mockCollect).toHaveBeenCalledWith(expect.anything(), { deadline: 1_234_567_890 }, expect.any(Function));
+  });
+
+  it('re-queues with buffer cap when stream.write throws synchronously (B2)', async () => {
+    mockStream.write.mockImplementation(() => {
+      throw new Error('stream write failed');
+    });
+
+    (client as unknown as { buffer: unknown[] }).buffer.push({ transform: () => ({}) });
+
+    jest.advanceTimersByTime(1_000);
+    await Promise.resolve();
+
+    const clientAny = client as unknown as { buffer: unknown[] };
+    expect(clientAny.buffer.length).toBe(1);
+    expect(mockChannelManager.reportError).toHaveBeenCalled();
+  });
+
+  it('discards batch when grpc callback fails after stream delivery (Java parity, B2)', async () => {
+    (client as unknown as { buffer: unknown[] }).buffer.push({ transform: () => ({}) });
+
+    jest.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    expect(pendingCollectCallback).toBeDefined();
+
+    pendingCollectCallback?.(new Error('UNAVAILABLE'));
+    await Promise.resolve();
+
+    const clientAny = client as unknown as { buffer: unknown[] };
+    expect(clientAny.buffer.length).toBe(0);
   });
 
   describe('shutdown late callback safety (H2)', () => {

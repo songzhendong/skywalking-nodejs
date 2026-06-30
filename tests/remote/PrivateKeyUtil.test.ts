@@ -22,7 +22,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadDecryptionKey } from '../../src/agent/core/util/PrivateKeyUtil';
+import { loadDecryptionKey, loadDecryptionKeyAsync } from '../../src/agent/core/util/PrivateKeyUtil';
 
 function removeDir(dir: string): void {
   for (const entry of fs.readdirSync(dir)) {
@@ -38,6 +38,15 @@ describe('PrivateKeyUtil (Java PrivateKeyUtil parity)', () => {
     const pem = '-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----\n';
     fs.writeFileSync(keyPath, pem);
     expect(loadDecryptionKey(keyPath).toString('utf8')).toBe(pem);
+    removeDir(dir);
+  });
+
+  it('loadDecryptionKeyAsync reads PKCS#8 PEM (L5)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-pkcs8-async-'));
+    const keyPath = path.join(dir, 'client.pem');
+    const pem = '-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----\n';
+    fs.writeFileSync(keyPath, pem);
+    await expect(loadDecryptionKeyAsync(keyPath)).resolves.toEqual(Buffer.from(pem, 'utf8'));
     removeDir(dir);
   });
 

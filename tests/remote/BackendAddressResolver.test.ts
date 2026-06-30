@@ -30,10 +30,13 @@ jest.mock('../../src/logging', () => ({
 }));
 
 import {
+  DnsLookupFn,
   expandBackendAddresses,
   deriveTlsServerNameForConnectHost,
+  formatHostPort,
   isLiteralIp,
   parseStaticBackendAddresses,
+  splitHostPort,
 } from '../../src/agent/core/remote/BackendAddressResolver';
 
 describe('BackendAddressResolver (Java InetAddress.getAllByName parity)', () => {
@@ -60,6 +63,12 @@ describe('BackendAddressResolver (Java InetAddress.getAllByName parity)', () => 
 
   it('filters invalid host:port entries', () => {
     expect(parseStaticBackendAddresses('bad-entry,127.0.0.1:11800')).toEqual(['127.0.0.1:11800']);
+  });
+
+  it('parses bracketed IPv6 static backend addresses', () => {
+    expect(parseStaticBackendAddresses('[::1]:11800')).toEqual(['[::1]:11800']);
+    expect(splitHostPort('[::1]:11800')).toEqual({ host: '::1', port: '11800' });
+    expect(formatHostPort('::1', 11800)).toBe('[::1]:11800');
   });
 
   it('detects literal IP addresses', () => {
@@ -95,7 +104,7 @@ describe('BackendAddressResolver (Java InetAddress.getAllByName parity)', () => 
   it('includes IPv6 addresses from DNS lookup', async () => {
     const lookup = jest.fn().mockResolvedValue([{ address: '2001:db8::1', family: 6 }]);
     const result = await expandBackendAddresses(['v6-host.local:11800'], true, lookup);
-    expect(result).toEqual(['2001:db8::1:11800']);
+    expect(result).toEqual(['[2001:db8::1]:11800']);
   });
 
   it('merges multiple comma-separated hostnames via DNS', async () => {
@@ -137,7 +146,27 @@ describe('BackendAddressResolver (Java InetAddress.getAllByName parity)', () => 
       { address: '2001:db8::b', family: 6 },
     ]);
     const result = await expandBackendAddresses(['v6-only.local:11800'], true, lookup);
-    expect(result).toEqual(['2001:db8::a:11800', '2001:db8::b:11800']);
+    expect(result).toEqual(['[2001:db8::a]:11800', '[2001:db8::b]:11800']);
+  });
+
+  it('caps DNS A record count (L4)', async () => {
+    const many = Array.from({ length: 100 }, (_, index) => ({
+      address: `10.0.${Math.floor(index / 256)}.${index % 256}`,
+      family: 4,
+    }));
+    const lookup = jest.fn().mockResolvedValue(many);
+    const result = await expandBackendAddresses(['big.local:11800'], true, lookup);
+    expect(result.length).toBe(64);
+  });
+
+  it('times out slow DNS lookup without blocking (L4)', async () => {
+    jest.useFakeTimers();
+    const lookup: DnsLookupFn = jest.fn(() => new Promise(() => {}));
+    const promise = expandBackendAddresses(['slow.local:11800'], true, lookup);
+    await Promise.resolve();
+    jest.advanceTimersByTime(5_001);
+    await expect(promise).resolves.toEqual([]);
+    jest.useRealTimers();
   });
 
   it('derives TLS server name from collector hostname when connect host is IP', () => {

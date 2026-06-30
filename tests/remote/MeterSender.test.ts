@@ -110,6 +110,8 @@ describe('MeterSender', () => {
     mockMeterData.setService.mockClear();
     mockMeterData.setServiceinstance.mockClear();
     mockMeterData.setTimestamp.mockClear();
+    mockStream.write.mockReset();
+    mockStream.end.mockReset();
     pendingCollectCallback = undefined;
     mockCollect.mockImplementation((_meta, _opts, cb) => {
       pendingCollectCallback = cb;
@@ -150,6 +152,71 @@ describe('MeterSender', () => {
     sender.boot();
     expect((sender as unknown as { collectTimer?: NodeJS.Timeout }).collectTimer).toBe(collectTimer);
     expect((sender as unknown as { reportTimer?: NodeJS.Timeout }).reportTimer).toBe(reportTimer);
+  });
+
+  it('re-queues with buffer cap when stream.write throws synchronously (M1)', async () => {
+    mockStream.write.mockImplementation(() => {
+      throw new Error('stream write failed');
+    });
+
+    jest.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    jest.advanceTimersByTime(1_000);
+    await Promise.resolve();
+
+    const senderAny = sender as unknown as { buffer: unknown[]; maxBufferSize: () => number };
+    expect(senderAny.buffer.length).toBeGreaterThan(0);
+    expect(senderAny.buffer.length).toBeLessThanOrEqual(senderAny.maxBufferSize());
+    expect(mockChannelManager.reportError).toHaveBeenCalled();
+  });
+
+  it('always ends stream and does not re-queue after partial writes (L1/L2, Java discard)', async () => {
+    mockStream.write
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error('partial write');
+      });
+
+    jest.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    jest.advanceTimersByTime(1_000);
+    await Promise.resolve();
+
+    expect(mockStream.end).toHaveBeenCalled();
+    const senderAny = sender as unknown as { buffer: unknown[]; maxBufferSize: () => number };
+    expect(senderAny.buffer.length).toBeLessThanOrEqual(senderAny.maxBufferSize());
+    expect(senderAny.buffer.length).toBeLessThanOrEqual(2);
+  });
+
+  it('discards batch when grpc callback fails after stream delivery (Java JVM parity, L2)', async () => {
+    jest.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    jest.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    expect(pendingCollectCallback).toBeDefined();
+
+    const bufferBeforeCallback = (sender as unknown as { buffer: unknown[] }).buffer.length;
+    pendingCollectCallback?.(new Error('UNAVAILABLE'));
+    await Promise.resolve();
+
+    const senderAny = sender as unknown as { buffer: unknown[]; maxBufferSize: () => number };
+    expect(senderAny.buffer.length).toBeLessThanOrEqual(senderAny.maxBufferSize());
+    expect(senderAny.buffer.length).toBeLessThanOrEqual(bufferBeforeCallback + 1);
+  });
+
+  it('enforces buffer cap when failed report re-queues snapshots (B1)', () => {
+    const senderAny = sender as unknown as {
+      buffer: unknown[];
+      requeueSnapshots: (snapshots: unknown[]) => void;
+      maxBufferSize: () => number;
+    };
+    const maxSize = senderAny.maxBufferSize();
+    const failedBatch = Array.from({ length: maxSize }, (_, index) => ({ failed: index }));
+    senderAny.buffer.push(...Array.from({ length: 100 }, (_, index) => ({ live: index })));
+
+    senderAny.requeueSnapshots(failedBatch);
+
+    expect(senderAny.buffer.length).toBe(maxSize);
   });
 
   describe('shutdown late callback safety (H2 / E6 edge case)', () => {

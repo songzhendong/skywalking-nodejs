@@ -20,43 +20,13 @@
 import fs from 'fs';
 import * as grpc from '@grpc/grpc-js';
 import { resolveAgentPath } from '../boot/AgentPackagePath';
-import { loadDecryptionKey } from '../util/PrivateKeyUtil';
 import config from '../../../config/AgentConfig';
 import { createLogger } from '../../../logging';
 import ChannelBuilder, { ChannelBuildContext } from './ChannelBuilder';
 import { deriveTlsServerNameForConnectHost } from './BackendAddressResolver';
+import { getTlsMaterials } from './TlsMaterialCache';
 
 const logger = createLogger(__filename);
-
-function readTlsFile(configuredPath: string | undefined): Buffer | null {
-  const filePath = resolveAgentPath(configuredPath);
-  if (!filePath) {
-    return null;
-  }
-  try {
-    if (fs.statSync(filePath).isFile()) {
-      return fs.readFileSync(filePath);
-    }
-  } catch {
-    // missing or unreadable — treated as absent
-  }
-  return null;
-}
-
-function readPrivateKey(configuredPath: string | undefined): Buffer | null {
-  const filePath = resolveAgentPath(configuredPath);
-  if (!filePath) {
-    return null;
-  }
-  try {
-    if (fs.statSync(filePath).isFile()) {
-      return loadDecryptionKey(filePath);
-    }
-  } catch (error) {
-    logger.error('Failed to load private key from %s: %s', filePath, error);
-  }
-  return null;
-}
 
 function isCaFileAvailable(): boolean {
   const filePath = resolveAgentPath(config.sslTrustedCaPath);
@@ -70,14 +40,31 @@ function isCaFileAvailable(): boolean {
   }
 }
 
-/** Java: FORCE_TLS || ca.crt exists; Node also accepts legacy SW_AGENT_SECURE. */
+/**
+ * TLS is enabled only when a trusted CA file is present.
+ * {@code SW_AGENT_SECURE}/{@code SW_AGENT_FORCE_TLS} without CA are rejected to avoid
+ * {@code createSsl(null,...)} against unintended system trust stores.
+ */
 function shouldUseTls(): boolean {
-  return Boolean(config.secure || config.forceTls || isCaFileAvailable());
+  if (isCaFileAvailable()) {
+    return true;
+  }
+  if (config.forceTls) {
+    logger.error('SW_AGENT_FORCE_TLS=true but trusted CA file is missing; TLS disabled.');
+  } else if (config.secure) {
+    logger.error('SW_AGENT_SECURE=true but trusted CA file is missing; TLS disabled.');
+  }
+  return false;
+}
+
+export function isTlsEnabled(): boolean {
+  return shouldUseTls();
 }
 
 /**
  * If only ca.crt exists, start TLS. If cert, key and ca files exist, enable mTLS.
- * Aligned with Java {@code TLSChannelBuilder}.
+ * Aligned with Java {@code TLSChannelBuilder}. TLS files must be preloaded via
+ * {@link preloadTlsMaterials} before channel build.
  */
 export default class TLSChannelBuilder implements ChannelBuilder {
   build(context: ChannelBuildContext): ChannelBuildContext {
@@ -85,19 +72,15 @@ export default class TLSChannelBuilder implements ChannelBuilder {
       return context;
     }
 
-    const rootCerts = readTlsFile(config.sslTrustedCaPath);
-    let privateKey = readPrivateKey(config.sslKeyPath);
-    let certChain = readTlsFile(config.sslCertChainPath);
+    const materials = getTlsMaterials();
+    if (!materials?.rootCerts) {
+      logger.error('TLS required but trusted CA material is unavailable; refusing insecure channel.');
+      throw new Error('TLS material unavailable');
+    }
 
-    const certPathSet = Boolean(config.sslCertChainPath);
-    const keyPathSet = Boolean(config.sslKeyPath);
-    if (certPathSet && keyPathSet && (!privateKey || !certChain)) {
+    const { rootCerts, privateKey, certChain } = materials;
+    if (Boolean(config.sslCertChainPath) && Boolean(config.sslKeyPath) && (!privateKey || !certChain)) {
       logger.warn('Failed to enable mTLS caused by cert or key cannot be found.');
-      privateKey = null;
-      certChain = null;
-    } else if (certPathSet !== keyPathSet) {
-      privateKey = null;
-      certChain = null;
     }
 
     const credentials = grpc.credentials.createSsl(rootCerts, privateKey, certChain);
@@ -116,3 +99,5 @@ export default class TLSChannelBuilder implements ChannelBuilder {
     };
   }
 }
+
+export { preloadTlsMaterials } from './TlsMaterialCache';

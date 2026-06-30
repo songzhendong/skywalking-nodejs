@@ -30,36 +30,37 @@ agent.start({
 
 const server = http.createServer(async (req, res) => {
   await new Promise((resolve, reject) => {
-    mongoose.connect(`mongodb://root:root@${process.env.MONGO_HOST}:27017/admin`, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      useFindAndModify: false,
+    mongoose
+      .connect(`mongodb://root:root@${process.env.MONGO_HOST}:27017/admin`, {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+        useFindAndModify: false,
+      })
+      .then(() => {
+        const Test = new mongoose.Schema({
+          title: String,
+        });
 
-    }).then(() => {
-      const Test = new mongoose.Schema({
-        title: String
+        const modelTest = mongoose.model('Test', Test);
+
+        modelTest.find().then(
+          (result: any) => {
+            res.end(`${result}`);
+            resolve(null);
+            mongoose.connection.close();
+          },
+
+          (err: Error) => {
+            res.end(`${err}`);
+            resolve(null);
+            mongoose.connection.close();
+          },
+        );
+      })
+      .catch((err: Error) => {
+        res.end(`${err}`);
+        resolve(null);
       });
-
-      const modelTest = mongoose.model('Test', Test);
-
-      modelTest.find().then(
-        (result: any) => {
-          res.end(`${result}`);
-          resolve(null);
-          mongoose.connection.close();
-        },
-
-        (err: Error) => {
-          res.end(`${err}`);
-          resolve(null);
-          mongoose.connection.close();
-        },
-      );
-
-    }).catch((err: Error) => {
-      res.end(`${err}`);
-      resolve(null);
-    });
   });
 });
 

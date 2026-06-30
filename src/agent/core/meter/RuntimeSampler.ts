@@ -28,7 +28,18 @@ export type RuntimeSnapshot = {
   external: number;
   cpuUserPercent: number;
   cpuSystemPercent: number;
+  arrayBuffers: number;
+  uptime: number;
+  peakMallocedMemory: number;
+  detachedContexts: number;
+  oldSpaceUsed: number;
+  newSpaceUsed: number;
 };
+
+function readHeapSpaceUsed(spaceName: string): number {
+  const space = v8.getHeapSpaceStatistics().find((entry) => entry.space_name === spaceName);
+  return space?.space_used_size ?? 0;
+}
 
 export default class RuntimeSampler {
   private readonly logicalCpuCount = Math.max(1, os.cpus().length);
@@ -56,6 +67,12 @@ export default class RuntimeSampler {
       external: memory.external,
       cpuUserPercent,
       cpuSystemPercent,
+      arrayBuffers: memory.arrayBuffers ?? 0,
+      uptime: process.uptime(),
+      peakMallocedMemory: heapStats.peak_malloced_memory,
+      detachedContexts: heapStats.number_of_detached_contexts,
+      oldSpaceUsed: readHeapSpaceUsed('old_space'),
+      newSpaceUsed: readHeapSpaceUsed('new_space'),
     };
   }
 

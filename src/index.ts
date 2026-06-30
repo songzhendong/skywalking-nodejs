@@ -51,15 +51,15 @@ class Agent {
     this.started = true;
   }
 
-  flush(): Promise<any> | null {
+  flush(): Promise<unknown | null> {
     if (!this.started) {
       logger.warn('Trying to flush() SkyWalking agent which is not started.');
-      return null;
+      return Promise.resolve(null);
     }
 
     const spanContextFlush = SpanContext.flush();
     if (!spanContextFlush) {
-      return ServiceManager.INSTANCE.flush();
+      return ServiceManager.INSTANCE.flush() ?? Promise.resolve(null);
     }
 
     return new Promise((resolve) => {

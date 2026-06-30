@@ -23,7 +23,9 @@ export type AgentConfig = {
   serviceName?: string;
   serviceInstance?: string;
   collectorAddress?: string;
+  /** Legacy TLS switch; Node still requires SW_AGENT_SSL_TRUSTED_CA_PATH (unlike Java system trust with FORCE_TLS). */
   secure?: boolean;
+  /** Prefer explicit CA file; Java may enable TLS with FORCE_TLS alone, Node does not. */
   forceTls?: boolean;
   sslTrustedCaPath?: string;
   sslCertChainPath?: string;
@@ -238,6 +240,7 @@ const _config = {
       return os.hostname();
     })(),
   collectorAddress: process.env.SW_AGENT_COLLECTOR_BACKEND_SERVICES || '127.0.0.1:11800',
+  // Node requires a readable CA file before TLS (Java FORCE_TLS may use the system trust store).
   secure: process.env.SW_AGENT_SECURE?.toLowerCase() === 'true',
   forceTls: process.env.SW_AGENT_FORCE_TLS?.toLowerCase() === 'true',
   sslTrustedCaPath: ((): string => {

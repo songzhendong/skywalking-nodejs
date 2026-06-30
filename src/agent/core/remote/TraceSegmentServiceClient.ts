@@ -166,38 +166,79 @@ export default class TraceSegmentServiceClient implements BootService, GRPCChann
         return;
       }
 
+      let snapshots: Segment[] = [];
+      let settled = false;
       let stream: ReturnType<TraceSegmentReportServiceClient['collect']> | undefined;
+      let writesStarted = false;
+
+      const settle = (error?: unknown): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (error != null) {
+          logReportError('Failed to report trace data', error);
+          this.reportGrpcError(error);
+          if (!this.closed && !writesStarted) {
+            this.requeueSegments(snapshots);
+          }
+        }
+        resolve();
+      };
+
       try {
+        snapshots = this.buffer.splice(0, this.buffer.length);
+
         stream = this.reporterClient.collect(new grpc.Metadata(), { deadline: grpcUpstreamDeadlineMs() }, (error) => {
           if (error) {
-            logReportError('Failed to report trace data', error);
-            this.reportGrpcError(error);
+            settle(error);
+          } else {
+            settle();
           }
-          resolve();
         });
 
-        for (const segment of this.buffer) {
+        for (const segment of snapshots) {
           if (segment) {
             if (logger._isDebugEnabled) {
-              logger.debug('Sending segment ', { segment });
+              logger.debug(
+                'Sending segment traceId=%s segmentId=%s spanCount=%d',
+                segment.relatedTraces[0]?.toString?.() ?? 'unknown',
+                segment.segmentId.toString(),
+                segment.spans.length,
+              );
             }
             stream.write(segment.transform());
+            writesStarted = true;
           }
         }
       } catch (error) {
-        logReportError('Failed to report trace data', error);
-        this.reportGrpcError(error);
-        resolve();
+        settle(error);
       } finally {
-        this.buffer.length = 0;
         try {
           stream?.end();
         } catch (error) {
-          logReportError('Failed to end trace collect stream', error);
-          resolve();
+          if (!settled) {
+            settle(error);
+          } else {
+            logReportError('Failed to end trace collect stream', error);
+          }
         }
       }
     });
+  }
+
+  /** Re-queue failed segments while enforcing the same cap as segmentFinished listener. */
+  private requeueSegments(segments: Segment[]): void {
+    if (segments.length === 0) {
+      return;
+    }
+    const maxBufferSize = config.maxBufferSize;
+    for (const segment of segments) {
+      while (this.buffer.length >= maxBufferSize) {
+        this.buffer.shift();
+      }
+      this.buffer.push(segment);
+    }
   }
 
   private reportGrpcError(error: unknown): void {

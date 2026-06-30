@@ -100,12 +100,30 @@ export default class MeterSender implements BootService, GRPCChannelListener {
     this.reportTimer.unref();
   }
 
+  private maxBufferSize(): number {
+    return config.runtimeMetricsBufferSize || 600;
+  }
+
   private collectSample(): void {
-    const maxBufferSize = config.runtimeMetricsBufferSize || 600;
+    const maxBufferSize = this.maxBufferSize();
     if (this.buffer.length >= maxBufferSize) {
       this.buffer.shift();
     }
     this.buffer.push(this.collector.sample());
+  }
+
+  /** Re-queue failed snapshots while enforcing the same cap as collectSample(). */
+  private requeueSnapshots(snapshots: RuntimeSnapshot[]): void {
+    if (snapshots.length === 0) {
+      return;
+    }
+    const maxBufferSize = this.maxBufferSize();
+    const combined = [...snapshots, ...this.buffer];
+    if (combined.length > maxBufferSize) {
+      combined.splice(0, combined.length - maxBufferSize);
+    }
+    this.buffer.length = 0;
+    this.buffer.push(...combined);
   }
 
   private reportBufferedMetrics(): Promise<void> {
@@ -125,6 +143,27 @@ export default class MeterSender implements BootService, GRPCChannelListener {
 
   private doReportBufferedMetrics(): Promise<void> {
     return new Promise((resolve) => {
+      let snapshots: RuntimeSnapshot[] = [];
+      let settled = false;
+      let stream: ReturnType<MeterReportServiceClient['collect']> | undefined;
+      let writesStarted = false;
+
+      const settle = (error?: unknown): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (error != null) {
+          logReportError('Failed to report runtime meter data', error);
+          this.reportGrpcError(error);
+          // Java JVMMetricsSender discards drained metrics on failure; re-queue only before stream writes.
+          if (!this.closed && !writesStarted) {
+            this.requeueSnapshots(snapshots);
+          }
+        }
+        resolve();
+      };
+
       try {
         if (this.closed) {
           resolve();
@@ -141,45 +180,41 @@ export default class MeterSender implements BootService, GRPCChannelListener {
           return;
         }
 
-        const snapshots = this.buffer.splice(0, this.buffer.length);
-        const stream = this.reporterClient.collect(
+        snapshots = this.buffer.splice(0, this.buffer.length);
+        const batch = snapshots;
+
+        stream = this.reporterClient.collect(
           new grpc.Metadata(),
           { deadline: grpcUpstreamDeadlineMs() },
           (error: grpc.ServiceError | null) => {
             if (error) {
-              logReportError('Failed to report runtime meter data', error);
-              this.reportGrpcError(error);
-              if (!this.closed) {
-                this.buffer.unshift(...snapshots);
-              }
+              settle(error);
+            } else {
+              settle();
             }
-            resolve();
           },
         );
 
-        try {
-          const timestamp = Date.now();
-          for (const snapshot of snapshots) {
-            for (const meterData of this.collector.toMeterData(snapshot)) {
-              meterData
-                .setService(config.serviceName)
-                .setServiceinstance(config.serviceInstance)
-                .setTimestamp(timestamp);
-              stream.write(meterData);
-            }
-          }
-        } finally {
-          try {
-            stream.end();
-          } catch (error) {
-            logReportError('Failed to end meter collect stream', error);
-            resolve();
+        const timestamp = Date.now();
+        for (const snapshot of batch) {
+          for (const meterData of this.collector.toMeterData(snapshot)) {
+            meterData.setService(config.serviceName).setServiceinstance(config.serviceInstance).setTimestamp(timestamp);
+            stream.write(meterData);
+            writesStarted = true;
           }
         }
       } catch (error) {
-        logReportError('Failed to report runtime meter data', error);
-        this.reportGrpcError(error);
-        resolve();
+        settle(error);
+      } finally {
+        try {
+          stream?.end();
+        } catch (error) {
+          if (!settled) {
+            settle(error);
+          } else {
+            logReportError('Failed to end meter collect stream', error);
+          }
+        }
       }
     });
   }
@@ -192,7 +227,7 @@ export default class MeterSender implements BootService, GRPCChannelListener {
     this.channelManager?.reportError(error);
   }
 
-  flush(): Promise<any> | null {
+  flush(): Promise<void> | null {
     if (this.closed) {
       return null;
     }

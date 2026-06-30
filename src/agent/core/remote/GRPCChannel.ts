@@ -21,6 +21,7 @@ import * as grpc from '@grpc/grpc-js';
 import { ClientOptions, connectivityState } from '@grpc/grpc-js';
 import ChannelBuilder, { ChannelBuildContext } from './ChannelBuilder';
 import ChannelDecorator from './ChannelDecorator';
+import { formatHostPort } from './BackendAddressResolver';
 
 export default class GRPCChannel {
   private readonly originChannel: grpc.Channel;

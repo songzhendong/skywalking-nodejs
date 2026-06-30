@@ -44,4 +44,8 @@ describe('AgentPackagePath (Java AgentPackagePath parity)', () => {
   it('keeps absolute paths unchanged', () => {
     expect(resolveAgentPath('/etc/ssl/ca.crt')).toBe('/etc/ssl/ca.crt');
   });
+
+  it('rejects relative paths that escape the agent package root', () => {
+    expect(() => resolveAgentPath('../../../etc/passwd')).toThrow(/escapes agent package root/);
+  });
 });

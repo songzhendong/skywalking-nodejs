@@ -32,6 +32,12 @@ export function getAgentPackagePath(): string {
   return cachedPackagePath;
 }
 
+function isPathInsideRoot(resolvedPath: string, root: string): boolean {
+  const normalizedRoot = path.resolve(root);
+  const normalizedResolved = path.resolve(resolvedPath);
+  return normalizedResolved === normalizedRoot || normalizedResolved.startsWith(`${normalizedRoot}${path.sep}`);
+}
+
 /**
  * Resolve TLS file paths relative to the agent package when not absolute
  * (Java {@code new File(AgentPackagePath.getPath(), configuredPath)}).
@@ -41,9 +47,14 @@ export function resolveAgentPath(configuredPath: string | undefined): string | u
     return undefined;
   }
   if (path.isAbsolute(configuredPath)) {
-    return configuredPath;
+    return path.normalize(configuredPath);
   }
-  return path.join(getAgentPackagePath(), configuredPath);
+  const root = getAgentPackagePath();
+  const resolved = path.normalize(path.join(root, configuredPath));
+  if (!isPathInsideRoot(resolved, root)) {
+    throw new Error(`TLS path escapes agent package root: ${configuredPath}`);
+  }
+  return resolved;
 }
 
 /** @internal test hook */

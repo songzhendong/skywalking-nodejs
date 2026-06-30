@@ -27,13 +27,14 @@ import {
   deriveTlsServerNameForConnectHost,
   expandBackendAddresses,
   parseStaticBackendAddresses,
+  splitHostPort,
 } from './BackendAddressResolver';
 import GRPCChannel from './GRPCChannel';
 import { GRPCChannelListener } from './GRPCChannelListener';
 import { GRPCChannelStatus } from './GRPCChannelStatus';
 import BootService from '../boot/BootService';
 import StandardChannelBuilder from './StandardChannelBuilder';
-import TLSChannelBuilder from './TLSChannelBuilder';
+import TLSChannelBuilder, { isTlsEnabled, preloadTlsMaterials } from './TLSChannelBuilder';
 
 const logger = createLogger(__filename);
 
@@ -69,7 +70,7 @@ export default class GRPCChannelManager implements BootService {
     if (!target) {
       throw new Error('collectorAddress is not configured');
     }
-    const { host, port } = splitTarget(target);
+    const { host, port } = splitHostPort(target);
     const logicalHost = deriveTlsServerNameForConnectHost(host, config.collectorAddress ?? '') ?? host;
     return `${logicalHost}:${port}`;
   }
@@ -256,7 +257,7 @@ export default class GRPCChannelManager implements BootService {
       return;
     }
 
-    const { host, port: portText } = splitTarget(target);
+    const { host, port: portText } = splitHostPort(target);
     const port = Number.parseInt(portText, 10);
     if (!host || Number.isNaN(port)) {
       throw new Error(`Invalid collector address: ${target}`);
@@ -267,12 +268,21 @@ export default class GRPCChannelManager implements BootService {
     this.managedChannel = null;
     previous?.shutdownNow();
 
-    this.managedChannel = GRPCChannel.newBuilder(host, port)
-      .addManagedChannelBuilder(new StandardChannelBuilder())
-      .addManagedChannelBuilder(new TLSChannelBuilder())
-      .addChannelDecorator(new AgentIDDecorator())
-      .addChannelDecorator(new AuthenticationDecorator())
-      .build();
+    try {
+      if (isTlsEnabled()) {
+        await preloadTlsMaterials();
+      }
+
+      this.managedChannel = GRPCChannel.newBuilder(host, port)
+        .addManagedChannelBuilder(new StandardChannelBuilder())
+        .addManagedChannelBuilder(new TLSChannelBuilder())
+        .addChannelDecorator(new AgentIDDecorator())
+        .addChannelDecorator(new AuthenticationDecorator())
+        .build();
+    } catch (error) {
+      logger.error('Failed to build gRPC channel for target [%s]: %s', target, error);
+      return;
+    }
 
     this.selectedIdx = index;
     this.currentTarget = target;
@@ -326,11 +336,4 @@ export default class GRPCChannelManager implements BootService {
       }
     }
   }
-}
-
-function splitTarget(target: string): { host: string; port: string } {
-  const parts = target.split(':');
-  const port = parts[parts.length - 1];
-  const host = parts.slice(0, -1).join(':');
-  return { host, port };
 }

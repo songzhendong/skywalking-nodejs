@@ -45,6 +45,6 @@ const server = http.createServer((req, res) => {
     res.statusCode = 500;
     res.end(err.message);
   });
-})
+});
 
 server.listen(5000, () => console.info('Listening on port 5000...'));

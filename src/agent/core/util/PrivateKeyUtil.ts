@@ -18,6 +18,7 @@
  */
 
 import fs from 'fs';
+import { promises as fsPromises } from 'fs';
 
 const PKCS_1_PEM_HEADER = '-----BEGIN RSA PRIVATE KEY-----';
 const PKCS_1_PEM_FOOTER = '-----END RSA PRIVATE KEY-----';
@@ -25,11 +26,10 @@ const PKCS_8_PEM_HEADER = '-----BEGIN PRIVATE KEY-----';
 const PKCS_8_PEM_FOOTER = '-----END PRIVATE KEY-----';
 
 /**
- * Load a RSA private key from a file (PEM PKCS#1 or PKCS#8).
+ * Load a RSA private key from PEM bytes (PKCS#1 or PKCS#8).
  * Aligned with Java {@code PrivateKeyUtil.loadDecryptionKey}.
  */
-export function loadDecryptionKey(keyFilePath: string): Buffer {
-  const keyDataBytes = fs.readFileSync(keyFilePath);
+export function loadDecryptionKeyFromBuffer(keyDataBytes: Buffer): Buffer {
   let keyDataString = keyDataBytes.toString('utf8');
 
   if (keyDataString.includes(PKCS_1_PEM_HEADER)) {
@@ -41,6 +41,20 @@ export function loadDecryptionKey(keyFilePath: string): Buffer {
   }
 
   return keyDataBytes;
+}
+
+/**
+ * Load a RSA private key from a file (PEM PKCS#1 or PKCS#8).
+ * Aligned with Java {@code PrivateKeyUtil.loadDecryptionKey}.
+ */
+/** Preferred for runtime TLS loading (non-blocking). */
+export async function loadDecryptionKeyAsync(keyFilePath: string): Promise<Buffer> {
+  return loadDecryptionKeyFromBuffer(await fsPromises.readFile(keyFilePath));
+}
+
+/** Synchronous loader retained for unit tests and legacy callers. */
+export function loadDecryptionKey(keyFilePath: string): Buffer {
+  return loadDecryptionKeyFromBuffer(fs.readFileSync(keyFilePath));
 }
 
 /** Convert raw PKCS#1 bytes into PKCS#8 PEM (Java readPkcs1PrivateKey). */
