@@ -17,23 +17,12 @@
  *
  */
 
-import * as grpc from '@grpc/grpc-js';
-import ChannelBuilder, { ChannelBuildContext } from './ChannelBuilder';
-import { GRPC_KEEPALIVE_OPTIONS } from './GrpcKeepaliveOptions';
+import { ChannelOptions } from '@grpc/grpc-js';
 
-const MAX_INBOUND_MESSAGE_SIZE = 1024 * 1024 * 50;
-
-export default class StandardChannelBuilder implements ChannelBuilder {
-  build(context: ChannelBuildContext): ChannelBuildContext {
-    return {
-      ...context,
-      credentials: grpc.credentials.createInsecure(),
-      options: {
-        ...context.options,
-        ...GRPC_KEEPALIVE_OPTIONS,
-        'grpc.max_receive_message_length': MAX_INBOUND_MESSAGE_SIZE,
-        'grpc.max_send_message_length': MAX_INBOUND_MESSAGE_SIZE,
-      },
-    };
-  }
-}
+/** HTTP/2 keepalive for long-lived agent -> OAP gRPC connections. */
+export const GRPC_KEEPALIVE_OPTIONS: ChannelOptions = {
+  'grpc.keepalive_time_ms': 30_000,
+  'grpc.keepalive_timeout_ms': 10_000,
+  'grpc.keepalive_permit_without_calls': 1,
+  'grpc.http2.max_pings_without_data': 0,
+};

@@ -1,3 +1,4 @@
+#
 # Licensed to the Apache Software Foundation (ASF) under one or more
 # contributor license agreements.  See the NOTICE file distributed with
 # this work for additional information regarding copyright ownership.
@@ -12,17 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-ARG SW_NODE_VERSION
-
-FROM node:${SW_NODE_VERSION}
-
-ARG ROOT=.
-
-WORKDIR /app
-
-ADD $ROOT /app
-
-ARG NPM_REGISTRY=
-RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi \
-  && npm install request && npm install
+#
+#!/usr/bin/env bash
+# Run Phase A then Phase B sequentially (disjoint host ports — safe on one machine).
+set -euo pipefail
+export TESTCONTAINERS_RYUK_DISABLED=true
+npm run test tests/remote-e2e/static-failover/ --runInBand
+npm run test tests/remote-e2e/dns-re-resolve/ --runInBand

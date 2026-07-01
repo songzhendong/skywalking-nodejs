@@ -26,29 +26,40 @@ import ServiceManager from '../boot/ServiceManager';
 import RuntimeMetricsCollector from './RuntimeMetricsCollector';
 import { RuntimeSnapshot } from './RuntimeSampler';
 import GRPCChannelManager from '../remote/GRPCChannelManager';
+import { grpcUpstreamDeadlineMs } from '../remote/GrpcUpstreamOptions';
 import { GRPCChannelListener } from '../remote/GRPCChannelListener';
 import { GRPCChannelStatus } from '../remote/GRPCChannelStatus';
 
 const logger = createLogger(__filename);
 const logReportError = throttled(logger, 'error', 30000);
 
+/** Cap one Meter collect stream size (snapshots * meters per snapshot). */
+const MAX_SNAPSHOTS_PER_METER_STREAM = 50;
+
 /** Reports Node.js runtime metrics via gRPC MeterReportService (Go/Python-compatible pipeline). */
 export default class MeterSender implements BootService, GRPCChannelListener {
+  private closed = false;
+  private channelManager?: GRPCChannelManager;
   private status = GRPCChannelStatus.DISCONNECT;
   private reporterClient?: MeterReportServiceClient;
   private readonly buffer: RuntimeSnapshot[] = [];
   private collectTimer?: NodeJS.Timeout;
   private reportTimer?: NodeJS.Timeout;
   private reporting?: Promise<void>;
-
   private collector!: RuntimeMetricsCollector;
 
   prepare(): void {
     this.collector = new RuntimeMetricsCollector();
-    ServiceManager.INSTANCE.findService(GRPCChannelManager)!.addChannelListener(this);
+    this.channelManager = ServiceManager.INSTANCE.findService(GRPCChannelManager);
+    this.channelManager?.addChannelListener(this);
   }
 
   boot(): void {
+    if (this.collectTimer || this.reportTimer) {
+      logger.warn('MeterSender timers already scheduled; skipping duplicate boot.');
+      return;
+    }
+
     this.startTimers();
   }
 
@@ -63,35 +74,66 @@ export default class MeterSender implements BootService, GRPCChannelListener {
     this.reporterClient = status === GRPCChannelStatus.CONNECTED ? this.createReporterClient() : undefined;
   }
 
-  private createReporterClient(): MeterReportServiceClient {
+  private createReporterClient(): MeterReportServiceClient | undefined {
+    if (!this.channelManager) {
+      return undefined;
+    }
+
     return new MeterReportServiceClient(
-      config.collectorAddress,
+      this.channelManager.resolveAddress(),
       grpc.credentials.createInsecure(),
-      ServiceManager.INSTANCE.findService(GRPCChannelManager)!.getClientOptions(),
+      this.channelManager.getClientOptions(),
     );
   }
 
   private startTimers(): void {
-    this.collectTimer = setInterval(
-      () => this.collectSample(),
-      config.runtimeMetricsCollectPeriod || 1000,
-    ) as NodeJS.Timeout;
+    this.collectTimer = setInterval(() => {
+      if (this.closed) {
+        return;
+      }
+      this.collectSample();
+    }, config.runtimeMetricsCollectPeriod || 1000) as NodeJS.Timeout;
     this.collectTimer.unref();
     this.reportTimer = setInterval(() => {
+      if (this.closed) {
+        return;
+      }
       void this.reportBufferedMetrics();
     }, config.runtimeMetricsReportPeriod || 1000) as NodeJS.Timeout;
     this.reportTimer.unref();
   }
 
+  private maxBufferSize(): number {
+    return config.runtimeMetricsBufferSize || 600;
+  }
+
   private collectSample(): void {
-    const maxBufferSize = config.runtimeMetricsBufferSize || 600;
+    const maxBufferSize = this.maxBufferSize();
     if (this.buffer.length >= maxBufferSize) {
       this.buffer.shift();
     }
     this.buffer.push(this.collector.sample());
   }
 
+  /** Re-queue failed snapshots while enforcing the same cap as collectSample(). */
+  private requeueSnapshots(snapshots: RuntimeSnapshot[]): void {
+    if (snapshots.length === 0) {
+      return;
+    }
+    const maxBufferSize = this.maxBufferSize();
+    const combined = [...snapshots, ...this.buffer];
+    if (combined.length > maxBufferSize) {
+      combined.splice(0, combined.length - maxBufferSize);
+    }
+    this.buffer.length = 0;
+    this.buffer.push(...combined);
+  }
+
   private reportBufferedMetrics(): Promise<void> {
+    if (this.closed) {
+      return Promise.resolve();
+    }
+
     if (this.reporting) {
       return this.reporting;
     }
@@ -99,63 +141,122 @@ export default class MeterSender implements BootService, GRPCChannelListener {
     this.reporting = this.doReportBufferedMetrics().finally(() => {
       this.reporting = undefined;
     });
-
     return this.reporting;
   }
 
   private doReportBufferedMetrics(): Promise<void> {
     return new Promise((resolve) => {
+      let snapshots: RuntimeSnapshot[] = [];
+      let settled = false;
+      let stream: ReturnType<MeterReportServiceClient['collect']> | undefined;
+      let writesStarted = false;
+
+      const settle = (error?: unknown): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (error != null) {
+          if (!this.handleMeterReportError(error)) {
+            logReportError('Failed to report runtime meter data', error);
+            this.reportGrpcError(error);
+          }
+          // Java JVMMetricsSender discards drained metrics on failure; re-queue only before stream writes.
+          if (!this.closed && !writesStarted) {
+            this.requeueSnapshots(snapshots);
+          }
+        }
+        resolve();
+      };
+
       try {
+        if (this.closed) {
+          resolve();
+          return;
+        }
+
         if (this.buffer.length === 0 || this.status !== GRPCChannelStatus.CONNECTED || !this.reporterClient) {
           resolve();
           return;
         }
 
-        const snapshots = this.buffer.splice(0, this.buffer.length);
-        const stream = this.reporterClient.collect(
+        if (!config.serviceName || !config.serviceInstance) {
+          resolve();
+          return;
+        }
+
+        snapshots = this.buffer.splice(0, Math.min(this.buffer.length, MAX_SNAPSHOTS_PER_METER_STREAM));
+        const batch = snapshots;
+
+        stream = this.reporterClient.collect(
           new grpc.Metadata(),
-          { deadline: Date.now() + (config.traceTimeout || 10000) },
+          { deadline: grpcUpstreamDeadlineMs() },
           (error: grpc.ServiceError | null) => {
             if (error) {
-              logReportError('Failed to report runtime meter data', error);
-              ServiceManager.INSTANCE.findService(GRPCChannelManager)!.reportError(error);
+              settle(error);
+            } else {
+              settle();
             }
-            resolve();
           },
         );
 
-        try {
-          let metadataWritten = false;
-          const timestamp = Date.now();
-          for (const snapshot of snapshots) {
-            for (const meterData of this.collector.toMeterData(snapshot)) {
-              if (!metadataWritten) {
-                meterData
-                  .setService(config.serviceName!)
-                  .setServiceinstance(config.serviceInstance!)
-                  .setTimestamp(timestamp);
-                metadataWritten = true;
-              }
-              stream.write(meterData);
-            }
+        for (const snapshot of batch) {
+          for (const meterData of this.collector.toMeterData(snapshot)) {
+            meterData
+              .setService(config.serviceName)
+              .setServiceinstance(config.serviceInstance)
+              .setTimestamp(snapshot.collectedAt);
+            stream.write(meterData);
+            writesStarted = true;
           }
-        } finally {
-          stream.end();
         }
       } catch (error) {
-        logReportError('Failed to report runtime meter data', error);
-        ServiceManager.INSTANCE.findService(GRPCChannelManager)!.reportError(error);
-        resolve();
+        settle(error);
+      } finally {
+        try {
+          stream?.end();
+        } catch (error) {
+          if (!settled) {
+            settle(error);
+          } else {
+            logReportError('Failed to end meter collect stream', error);
+          }
+        }
       }
     });
   }
 
-  flush(): Promise<any> | null {
+  private reportGrpcError(error: unknown): void {
+    if (this.closed) {
+      return;
+    }
+
+    this.channelManager?.reportError(error);
+  }
+
+  /** Java MeterSender: disable reporting when OAP has no MeterReportService. */
+  private handleMeterReportError(error: unknown): boolean {
+    const code = (error as grpc.ServiceError | undefined)?.code;
+    if (code !== grpc.status.UNIMPLEMENTED) {
+      return false;
+    }
+
+    logger.warn("Backend doesn't support meter report; runtime meter reporting will be disabled.");
+    this.shutdown();
+    return true;
+  }
+
+  flush(): Promise<void> | null {
+    if (this.closed) {
+      return null;
+    }
+
     this.collectSample();
     return this.reportBufferedMetrics();
   }
 
   shutdown(): void {
+    this.closed = true;
     if (this.collectTimer) {
       clearInterval(this.collectTimer);
       this.collectTimer = undefined;
@@ -168,6 +269,7 @@ export default class MeterSender implements BootService, GRPCChannelListener {
     this.reporterClient = undefined;
     this.buffer.length = 0;
     this.collector.destroy();
+    this.channelManager = undefined;
     logger.info('MeterSender destroyed and resources cleaned up');
   }
 }

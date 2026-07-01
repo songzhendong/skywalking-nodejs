@@ -23,6 +23,8 @@ import * as grpc from '@grpc/grpc-js';
 export interface ChannelBuildContext {
   credentials: grpc.ChannelCredentials;
   options: grpc.ChannelOptions;
+  /** Physical connect host (may be IP after DNS re-resolve). */
+  connectHost?: string;
 }
 
 export default interface ChannelBuilder {

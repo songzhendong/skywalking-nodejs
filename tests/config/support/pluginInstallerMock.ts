@@ -17,23 +17,12 @@
  *
  */
 
-import * as grpc from '@grpc/grpc-js';
-import ChannelBuilder, { ChannelBuildContext } from './ChannelBuilder';
-import { GRPC_KEEPALIVE_OPTIONS } from './GrpcKeepaliveOptions';
-
-const MAX_INBOUND_MESSAGE_SIZE = 1024 * 1024 * 50;
-
-export default class StandardChannelBuilder implements ChannelBuilder {
-  build(context: ChannelBuildContext): ChannelBuildContext {
-    return {
-      ...context,
-      credentials: grpc.credentials.createInsecure(),
-      options: {
-        ...context.options,
-        ...GRPC_KEEPALIVE_OPTIONS,
-        'grpc.max_receive_message_length': MAX_INBOUND_MESSAGE_SIZE,
-        'grpc.max_send_message_length': MAX_INBOUND_MESSAGE_SIZE,
-      },
-    };
-  }
+/* eslint-env jest */
+export function createPluginInstallerMockModule() {
+  return {
+    __esModule: true,
+    default: jest.fn().mockImplementation(() => ({
+      install: jest.fn(),
+    })),
+  };
 }
