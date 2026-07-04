@@ -88,6 +88,7 @@ export default class PluginInstaller {
   installNormal(): void {
     fs.readdirSync(this.pluginDir)
       .filter((file) => !(file.endsWith('.d.ts') || file.endsWith('.js.map')))
+      .sort((a, b) => a.localeCompare(b))
       .forEach((file) => {
         if (file.replace(/(?:Plugin)?\.js$/i, '').match(config.reDisablePlugins)) {
           logger.info(`Plugin ${file} not installed because it is disabled`);

@@ -1,0 +1,81 @@
+/*!
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+
+/* eslint-env jest */
+jest.mock('../../src/agent/core/boot/ServiceManager', () => {
+  const { createServiceManagerMockModule } = jest.requireActual('./support/serviceManagerMock');
+  return createServiceManagerMockModule();
+});
+
+jest.mock('../../src/core/PluginInstaller', () => {
+  const { createPluginInstallerMockModule } = jest.requireActual('./support/pluginInstallerMock');
+  return createPluginInstallerMockModule();
+});
+
+import agent, { config } from '../../src/index';
+import ServiceManager from '../../src/agent/core/boot/ServiceManager';
+import MeterSender from '../../src/agent/core/meter/MeterSender';
+import { AgentConfig, normalizeDeprecatedRuntimeMetricOptions } from '../../src/config/AgentConfig';
+import { resetRuntimeMetricConfig } from './support/runtimeMetricConfigTestUtils';
+
+describe('AgentConfig deprecated runtime metric options', () => {
+  afterEach(() => {
+    agent.destroy();
+    resetRuntimeMetricConfig();
+  });
+
+  it('maps deprecated aliases before merge', () => {
+    const normalized = normalizeDeprecatedRuntimeMetricOptions({
+      nvmMetricsReporterActive: false,
+    });
+
+    expect(normalized.runtimeMetricsReporterActive).toBe(false);
+    expect(normalized.nvmMetricsReporterActive).toBeUndefined();
+  });
+
+  it('keeps canonical options over deprecated aliases', () => {
+    const normalized = normalizeDeprecatedRuntimeMetricOptions({
+      runtimeMetricsReporterActive: true,
+      nvmMetricsReporterActive: false,
+    });
+
+    expect(normalized.runtimeMetricsReporterActive).toBe(true);
+    expect(normalized.nvmMetricsReporterActive).toBeUndefined();
+  });
+
+  it('disables runtime metrics when agent.start receives nvmMetrics alias', () => {
+    agent.start({ nvmMetricsReporterActive: false });
+
+    expect(config.runtimeMetricsReporterActive).toBe(false);
+    expect((config as AgentConfig).nvmMetricsReporterActive).toBeUndefined();
+    expect(ServiceManager.INSTANCE.findService(MeterSender)).toBeUndefined();
+  });
+
+  it('re-enables runtime metrics after destroy/start with canonical option', () => {
+    agent.start({ nvmMetricsReporterActive: false });
+    expect(config.runtimeMetricsReporterActive).toBe(false);
+
+    agent.destroy();
+    agent.start({ runtimeMetricsReporterActive: true });
+
+    expect(config.runtimeMetricsReporterActive).toBe(true);
+    expect((config as AgentConfig).nvmMetricsReporterActive).toBeUndefined();
+    expect(ServiceManager.INSTANCE.findService(MeterSender)).toBeDefined();
+  });
+});

@@ -39,19 +39,21 @@ class ServiceManager {
     return ServiceManager.instance;
   }
 
-  boot(): void {
+  boot(): boolean {
     if (this.booted) {
-      return;
+      return true;
     }
 
     this.loadServices();
     const services = this.sortByPriority(true);
+    let failed = false;
 
     for (const service of services) {
       try {
         service.prepare();
       } catch (error) {
-        logger.error('ServiceManager prepare failed: %s', error);
+        logger.error('ServiceManager prepare failed for %s: %s', service.constructor.name, error);
+        failed = true;
       }
     }
 
@@ -59,7 +61,8 @@ class ServiceManager {
       try {
         service.boot();
       } catch (error) {
-        logger.error('ServiceManager boot failed: %s', error);
+        logger.error('ServiceManager boot failed for %s: %s', service.constructor.name, error);
+        failed = true;
       }
     }
 
@@ -67,11 +70,19 @@ class ServiceManager {
       try {
         service.onComplete();
       } catch (error) {
-        logger.error('ServiceManager onComplete failed: %s', error);
+        logger.error('ServiceManager onComplete failed for %s: %s', service.constructor.name, error);
+        failed = true;
       }
     }
 
+    if (failed) {
+      logger.error('ServiceManager boot aborted due to service failures');
+      this.shutdown();
+      return false;
+    }
+
     this.booted = true;
+    return true;
   }
 
   shutdown(): void {

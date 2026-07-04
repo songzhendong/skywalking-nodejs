@@ -21,6 +21,7 @@ import * as grpc from '@grpc/grpc-js';
 import { ClientOptions, connectivityState } from '@grpc/grpc-js';
 import ChannelBuilder, { ChannelBuildContext } from './ChannelBuilder';
 import ChannelDecorator from './ChannelDecorator';
+import { formatHostPort } from './BackendAddressResolver';
 
 export default class GRPCChannel {
   private readonly originChannel: grpc.Channel;
@@ -30,13 +31,14 @@ export default class GRPCChannel {
     let context: ChannelBuildContext = {
       credentials: grpc.credentials.createInsecure(),
       options: {},
+      connectHost: host,
     };
 
     for (const builder of channelBuilders) {
       context = builder.build(context);
     }
 
-    this.originChannel = new grpc.Channel(`${host}:${port}`, context.credentials, context.options);
+    this.originChannel = new grpc.Channel(formatHostPort(host, port), context.credentials, context.options);
     this.interceptors = decorators.map((decorator) => decorator.build());
   }
 

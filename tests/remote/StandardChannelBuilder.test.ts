@@ -17,23 +17,22 @@
  *
  */
 
+/* eslint-env jest */
+
 import * as grpc from '@grpc/grpc-js';
-import ChannelBuilder, { ChannelBuildContext } from './ChannelBuilder';
-import { GRPC_KEEPALIVE_OPTIONS } from './GrpcKeepaliveOptions';
+import StandardChannelBuilder from '../../src/agent/core/remote/StandardChannelBuilder';
+import { GRPC_KEEPALIVE_OPTIONS } from '../../src/agent/core/remote/GrpcKeepaliveOptions';
 
-const MAX_INBOUND_MESSAGE_SIZE = 1024 * 1024 * 50;
-
-export default class StandardChannelBuilder implements ChannelBuilder {
-  build(context: ChannelBuildContext): ChannelBuildContext {
-    return {
-      ...context,
+describe('StandardChannelBuilder', () => {
+  it('enables gRPC HTTP/2 keepalive options', () => {
+    const builder = new StandardChannelBuilder();
+    const context = builder.build({
       credentials: grpc.credentials.createInsecure(),
-      options: {
-        ...context.options,
-        ...GRPC_KEEPALIVE_OPTIONS,
-        'grpc.max_receive_message_length': MAX_INBOUND_MESSAGE_SIZE,
-        'grpc.max_send_message_length': MAX_INBOUND_MESSAGE_SIZE,
-      },
-    };
-  }
-}
+      options: {},
+    });
+
+    expect(context.options['grpc.keepalive_time_ms']).toBe(GRPC_KEEPALIVE_OPTIONS['grpc.keepalive_time_ms']);
+    expect(context.options['grpc.keepalive_timeout_ms']).toBe(GRPC_KEEPALIVE_OPTIONS['grpc.keepalive_timeout_ms']);
+    expect(context.options['grpc.keepalive_permit_without_calls']).toBe(1);
+  });
+});

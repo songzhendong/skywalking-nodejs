@@ -17,23 +17,10 @@
  *
  */
 
-import * as grpc from '@grpc/grpc-js';
-import ChannelBuilder, { ChannelBuildContext } from './ChannelBuilder';
-import { GRPC_KEEPALIVE_OPTIONS } from './GrpcKeepaliveOptions';
+import config from '../../../config/AgentConfig';
 
-const MAX_INBOUND_MESSAGE_SIZE = 1024 * 1024 * 50;
-
-export default class StandardChannelBuilder implements ChannelBuilder {
-  build(context: ChannelBuildContext): ChannelBuildContext {
-    return {
-      ...context,
-      credentials: grpc.credentials.createInsecure(),
-      options: {
-        ...context.options,
-        ...GRPC_KEEPALIVE_OPTIONS,
-        'grpc.max_receive_message_length': MAX_INBOUND_MESSAGE_SIZE,
-        'grpc.max_send_message_length': MAX_INBOUND_MESSAGE_SIZE,
-      },
-    };
-  }
+/** Java {@code Config.Collector.GRPC_UPSTREAM_TIMEOUT} — upstream gRPC call deadline (ms). */
+export function grpcUpstreamDeadlineMs(): number {
+  const seconds = config.grpcUpstreamTimeout ?? 30;
+  return Date.now() + seconds * 1000;
 }

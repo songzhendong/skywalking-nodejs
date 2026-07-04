@@ -17,7 +17,7 @@
  *
  */
 
-import config, { AgentConfig, finalizeConfig } from './config/AgentConfig';
+import config, { AgentConfig, finalizeConfig, normalizeDeprecatedRuntimeMetricOptions } from './config/AgentConfig';
 import ServiceManager from './agent/core/boot/ServiceManager';
 import { createLogger } from './logging';
 import PluginInstaller from './core/PluginInstaller';
@@ -39,26 +39,30 @@ class Agent {
       return;
     }
 
-    Object.assign(config, options);
-    finalizeConfig(config);
+    const normalizedOptions = normalizeDeprecatedRuntimeMetricOptions(options);
+    Object.assign(config, normalizedOptions);
+    finalizeConfig(config, normalizedOptions);
 
     logger.debug('Starting SkyWalking agent');
 
     new PluginInstaller().install();
 
-    ServiceManager.INSTANCE.boot();
+    if (!ServiceManager.INSTANCE.boot()) {
+      logger.error('SkyWalking agent boot failed; instrumentation remains active but remote reporting is unavailable');
+      return;
+    }
     this.started = true;
   }
 
-  flush(): Promise<any> | null {
+  flush(): Promise<unknown | null> {
     if (!this.started) {
       logger.warn('Trying to flush() SkyWalking agent which is not started.');
-      return null;
+      return Promise.resolve(null);
     }
 
     const spanContextFlush = SpanContext.flush();
     if (!spanContextFlush) {
-      return ServiceManager.INSTANCE.flush();
+      return ServiceManager.INSTANCE.flush() ?? Promise.resolve(null);
     }
 
     return new Promise((resolve) => {
